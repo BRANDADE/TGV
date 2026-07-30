@@ -1541,7 +1541,7 @@ def main():
     num_repeats = len(repeat_ids)
     logging.info(f"Extracted {num_repeats} unique repeat IDs from BED file.")
 
-    output_root = os.path.join("output_" + args.run_name)
+    output_root = os.path.join("inputs_" + args.run_name)
     os.makedirs(output_root, exist_ok=True)
 
     # --- CALCUL INTELLIGENT DU PARALLÉLISME ---
