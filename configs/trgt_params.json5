@@ -9,8 +9,8 @@
         "karyotype": "XX",
 
         // Preset: "wgs" or "targeted"
-        // Default TRGT: "wgs"
-        "preset": "wgs",
+        // Default TRGT: "targeted"
+        "preset": "targeted",
 
         // Verbosity level
         // Default TRGT: 0 (no -v)
@@ -27,8 +27,8 @@
         "genotyper": "size",
 
         // Minimum flanking sequence length
-        // Default TRGT: 250
-        "flank-len": 250,
+        // Default TRGT: 300
+        "flank-len": 300,
 
         // Maximum locus depth
         // Default TRGT: 250
@@ -66,5 +66,26 @@
 
         // Nombre max de lectures par allèle à tracer (entier >= 0)
         "max-allele-reads": 100
+    },
+
+
+    // ==========================================
+    // QC legend parameters
+    // ==========================================    
+    "coverage_thresholds": {
+        "high": 50,
+        "medium": 10
+    },
+
+    "coverage_colors": {
+        "high": "#baffc9",
+        "medium": "#ffdfba",
+        "low": "#ffb3ba"
+    },
+
+    "coverage_labels": {
+        "high": "Min Allele Coverage >= {high}X",
+        "medium": "Min Allele Coverage {medium}X - {high_minus_1}X",
+        "low": "Min Allele Coverage < {medium}X"
     }
 }

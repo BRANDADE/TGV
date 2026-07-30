@@ -179,6 +179,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
     saved_x = results_settings.get("x")
     saved_y = results_settings.get("y")
     saved_cols = results_settings.get("column_widths")
+    is_maximized = results_settings.get("maximized", False)
 
     # Déterminer la position (coordonnées)
     if saved_x is not None and saved_y is not None:
@@ -214,6 +215,16 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
         window.set_size((screen_w - 100, screen_h - 120))
         logging.debug(f"No window size config found. Applying default dimensions: {(screen_w - 100, screen_h - 120)}")
 
+    
+    if is_maximized:
+        try:
+            window.TKroot.state('zoomed')  # Pour Windows
+        except Exception:
+            try:
+                window.TKroot.attributes('-zoomed', True)  # Pour Linux/macOS
+            except Exception as e:
+                logging.warning(f"Could not maximize window: {e}")
+
     # --- 5. Appliquer les largeurs des colonnes ---
     if saved_cols:
         try:
@@ -241,6 +252,12 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             # --- Enregistrement de la configuration utilisateur ---
             try:
                 curr_size = window.size
+
+                # Détecter si la fenêtre est maximisée au moment de la fermeture
+                try:
+                    is_currently_maximized = (window.TKroot.state() == 'zoomed' or window.TKroot.attributes('-zoomed'))
+                except Exception:
+                    is_currently_maximized = False
                 
                 # Extraction ultra-précise des coordonnées Tkinter pour éviter la dérive
                 geom = window.TKroot.geometry() # Retourne une chaîne du type "1200x800+100+150"
@@ -261,11 +278,15 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                     col_widths_px.append(table_widget.column(col_key, "width"))
                 
                 ui_settings = load_ui_settings()
+                prev = ui_settings.get("results_window", {})
+                
                 ui_settings["results_window"] = {
-                    "width": curr_size[0],
-                    "height": curr_size[1],
-                    "x": curr_x,
-                    "y": curr_y,
+                    # Si on ferme en plein écran, on garde la taille/position normale précédente
+                    "width": prev.get("width", curr_size[0]) if is_currently_maximized else curr_size[0],
+                    "height": prev.get("height", curr_size[1]) if is_currently_maximized else curr_size[1],
+                    "x": prev.get("x", curr_x) if is_currently_maximized else curr_x,
+                    "y": prev.get("y", curr_y) if is_currently_maximized else curr_y,
+                    "maximized": is_currently_maximized,
                     "column_widths": col_widths_px
                 }
                 save_ui_settings(ui_settings)
