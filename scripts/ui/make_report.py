@@ -773,6 +773,28 @@ def generate_report_html_string(input_path: Path) -> str:
     font-family: var(--font-sans);
     font-size: 12.5px;
   }}
+  
+  /* --- BLOCAGE DE LA PREMIÈRE COLONNE (STICKY) --- */
+  .table-wrapper table th:first-child,
+  .table-wrapper table td:first-child {{
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.08);
+  }}
+
+  .table-wrapper table th:first-child {{
+    background: var(--surface2) !important;
+    z-index: 10;
+  }}
+
+  .table-wrapper table td:first-child {{
+    background: var(--surface) !important;
+  }}
+
+  .table-wrapper table tbody tr:hover td:first-child {{
+    background: var(--surface2) !important;
+  }}
 
   .qc-details-collapse {{
     margin-top: 15px;
