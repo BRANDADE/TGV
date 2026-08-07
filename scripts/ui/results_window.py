@@ -82,7 +82,7 @@ def build_genotype_panel():
     ], relief=sg.RELIEF_SUNKEN, pad=(5,5))
 
 
-def show_results_window(sample_name, results, label_priority, paths, online_status, low_depth_threshold):
+def show_results_window(sample_name, results, label_priority, paths, online_status, low_depth_threshold, run_id=""):
     sorted_labels = sorted(label_priority.keys(), key=lambda k: label_priority[k])
     sorted_labels = ["None"] + sorted_labels
 
@@ -538,7 +538,8 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             html = generate_html_table(
                 ["Locus", "Profondeur", "Génotype", "Classification"],
                 rows_export,
-                sample_name
+                sample_name,
+                run_id=run_id 
             )
             save_and_open_html(html)
 

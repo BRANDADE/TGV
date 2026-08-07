@@ -1458,6 +1458,12 @@ def main():
     logging.info(f"Platform: {sys.platform}")
     logging.info(f"Log file: {os.path.abspath(log_file)}")
 
+    if not HAS_MATPLOTLIB:
+        logging.warning("The 'matplotlib' library is missing. Quality Control plots (boxplots and quality matrix) will not be generated.")
+    
+    if json5 is None:
+        logging.warning("The 'json5' module is missing. Advanced configuration reading from 'configs/trgt_params.json5' is disabled; default parameters will be used.")
+
     parser = argparse.ArgumentParser(description="TGV Inputs Builder")
 
     parser.add_argument('--trgt', dest='trgt', default='trgt', help="Path to TRGT executable")

@@ -21,7 +21,7 @@ def is_low_coverage(r_dict):
     return False
 
 
-def generate_html_table(headers, rows, sample_name):
+def generate_html_table(headers, rows, sample_name, run_id = None):
     """Construit un tableau HTML interactif."""
     logging.info(f"Generating export HTML table for patient '{sample_name}' with {len(rows)} selected rows.")
 
@@ -88,7 +88,7 @@ def generate_html_table(headers, rows, sample_name):
         tbody_rows.append(row_html)
     tbody_html = "".join(tbody_rows)
 
-    # Document HTML complet
+# Document HTML complet
     html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -551,9 +551,10 @@ def generate_html_table(headers, rows, sample_name):
   }}
 
   async function copySelectedRows() {{
-    const headers = Array.from(document.querySelectorAll('table th')).slice(1, -1).map(th => th.innerText);
+    const runId = "{run_id}";
+    const sampleName = "{sample_name}";
     const rows = document.querySelectorAll('table tbody tr');
-    let tsvContent = headers.join('\\t') + '\\n';
+    let tsvContent = '';
     let hasSelected = false;
 
     rows.forEach(row => {{
@@ -563,18 +564,21 @@ def generate_html_table(headers, rows, sample_name):
         const cells = Array.from(row.querySelectorAll('td')).slice(1, -1).map(td => {{
           const tempTd = td.cloneNode(true);
           
-          // Supprime la classe modified-cell pour s'assurer que le crayon "✎" (via ::after) n'est pas copié
+          // Supprime la classe modified-cell pour s'assurer que le crayon "✎" n'est pas copié
           tempTd.classList.remove('modified-cell');
           
           const commentInput = tempTd.querySelector('.comment-input');
           let textVal = commentInput ? commentInput.innerText : tempTd.innerText;
           
-          // Nettoyage Unicode robuste : supprime le panneau d'attention \u26A0 et le sélecteur d'emoji \uFE0F
+          // Nettoyage Unicode robuste
           textVal = textVal.replace(/[\\u26A0\\uFE0F]/g, '');
           
           return textVal.trim();
         }});
-        tsvContent += cells.join('\\t') + '\\n';
+        
+        // Préfixe chaque ligne avec le run_id et le sample_name
+        const rowData = [runId, sampleName, ...cells];
+        tsvContent += rowData.join('\\t') + '\\n';
       }}
     }});
 
@@ -607,7 +611,6 @@ def generate_html_table(headers, rows, sample_name):
 </html>
 """
     return html
-
 
 def save_and_open_html(html_content):
     """Enregistre le HTML dans un fichier temporaire et l’ouvre de manière robuste sur tous les OS."""
