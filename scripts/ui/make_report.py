@@ -244,9 +244,10 @@ def generate_report_html_string(input_path: Path) -> str:
 
     raw_attrs = data.get("attributes", [])
     metrics_tsv = (
-        "\t".join(a["name"] for a in raw_attrs)
-        + "\n"
+        run_name
+        + "\t"
         + "\t".join(str(a["value"]) for a in raw_attrs)
+        + "\n"
     )
     metrics_tsv_json = json.dumps(metrics_tsv)
 
@@ -518,7 +519,7 @@ def generate_report_html_string(input_path: Path) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TRGT QC Report &mdash; {run_name}</title>
+<title>TGV QC Report &mdash; {run_name}</title>
 <style>
   :root {{
     --bg:        #f7f7f8;
@@ -1046,7 +1047,7 @@ def generate_report_html_string(input_path: Path) -> str:
 <footer class="footer">
   <div class="footer-left">
     <div class="footer-dot"></div>
-    <span>PacBio TRGT · pbcommand v{pbcommand_version}</span>
+    <span>TRGT Global Viewer &mdash; Target Enrichment Report</span>
   </div>
   <span>{json_filename}</span>
 </footer>
@@ -1223,7 +1224,7 @@ def open_report_on_the_fly(input_path: Path):
         run_name = reader.get_run_name()
         reader.close()
 
-        tmp_path = os.path.join(tempfile.gettempdir(), f"trgt_report_{run_name}.html")
+        tmp_path = os.path.join(tempfile.gettempdir(), f"tgv_report_{run_name}.html")
         logging.debug(f"Writing temporary standalone HTML report to: {tmp_path}")
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(html_content)
@@ -1240,7 +1241,7 @@ def open_report_on_the_fly(input_path: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Rapport HTML PacBio TRGT & TGV QC épuré")
+    parser = argparse.ArgumentParser(description="Rapport HTML PacBio TRGT & TGV QC")
     parser.add_argument("input_path", type=Path, help="Dossier du run ou fichier ZIP contenant les QC")
     args = parser.parse_args()
 
