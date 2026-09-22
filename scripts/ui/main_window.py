@@ -203,16 +203,29 @@ def run_main_window():
         panel_rows = build_panel_rows(list(panels.keys()))
         layout.append([sg.Frame("Panels", panel_rows)])
 
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo_chu_Nimes.png")
+
     layout.extend([
-        [sg.Button("Lancer l'analyse")],
-        [sg.Text("", key="-STATUS-", text_color="blue")],
-        [sg.Text("by Corentin Marco", justification="right",
-                 font=("Helvetica", 8), text_color="gray")],
+        [
+            sg.Column([
+                [sg.Button("Lancer l'analyse")],
+                [sg.Text("", key="-STATUS-", text_color="red", font=("Helvetica", 9), pad=(0,0))]
+            ], vertical_alignment="bottom", pad=(0,0)), 
+
+            sg.Push(),
+            sg.Column([
+                
+                [sg.Image(filename=logo_path, subsample=3) if os.path.exists(logo_path) else sg.Text("")]
+            ], vertical_alignment="bottom", element_justification="right", pad=(0,0)) 
+        ],
+        [
+            sg.Text("by Corentin Marco", font=("Helvetica", 8), text_color="gray", pad=((5,0),(0,0)))
+        ],
     ])
 
     # Modification du titre officiel de la fenêtre
     window = sg.Window("TGV - TRGT Global Viewer", layout, finalize=True)
-
+    
     try:
         window.TKroot.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
     except Exception as e:
