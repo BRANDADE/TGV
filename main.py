@@ -4,6 +4,7 @@ import os
 import tempfile
 import glob
 import logging
+import scripts.core.i18n
 
 # Importation du configurateur de logs
 from scripts.core.logger import setup_logging
