@@ -333,12 +333,42 @@ def restart_application(current_window=None):
         except Exception:
             pass
 
+    # 1. Détermination de la commande et du bon répertoire de travail
     if getattr(sys, 'frozen', False):
+        # Mode exécutable compilé (PyInstaller)
         cmd = [sys.executable] + sys.argv[1:]
+        working_dir = os.path.dirname(sys.executable)
     else:
+        # Mode script Python
         cmd = [sys.executable] + sys.argv
+        working_dir = BASE_DIR
 
-    subprocess.Popen(cmd)
+    # 2. Configuration pour détacher complètement le processus sous Windows / Linux
+    kwargs = {
+        "cwd": working_dir,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+
+    if sys.platform == "win32":
+        # Flags Windows pour rendre le nouveau processus totalement autonome
+        # 0x00000008 = DETACHED_PROCESS
+        # 0x00000200 = CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = 0x00000008 | 0x00000200
+        kwargs["close_fds"] = True
+    else:
+        # Flags Linux / macOS
+        kwargs["start_new_session"] = True
+
+    # 3. Lancement du nouveau processus détaché
+    try:
+        subprocess.Popen(cmd, **kwargs)
+    except Exception:
+        # Fallback simple au cas où
+        subprocess.Popen(cmd, cwd=working_dir)
+
+    # 4. Fermeture propre et immédiate de l'ancien processus
     os._exit(0)
 
 
