@@ -21,7 +21,7 @@ from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds
 from scripts.bio.clinical_config_builder import build_clinical_config
 
 from scripts.ui.results_window import show_results_window
-from scripts.ui.igv import is_online
+from scripts.ui.igv import is_online, get_asset_path
 from scripts.ui.make_report import open_report_on_the_fly
 
 # ---------------------------------------------------------
@@ -203,7 +203,7 @@ def run_main_window():
         panel_rows = build_panel_rows(list(panels.keys()))
         layout.append([sg.Frame("Panels", panel_rows)])
 
-    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo_chu_Nimes.png")
+    logo_path = get_asset_path("logo_chu_Nimes.png")
 
     layout.extend([
         [

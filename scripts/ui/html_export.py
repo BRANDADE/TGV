@@ -377,7 +377,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None):
     if (!str || str.startsWith('http')) return str;
 
     // Format avec parenthèses : ex "40 (38/2)" ou "40 (38 / 2)"
-    const matchParen = str.match(/^(.*?\()([^/]+)\/([^)]+)(\).*)$/);
+    const matchParen = str.match(/^(.*?\\()([^/]+)\\/([^)]+)(\\).*)$/);
     if (matchParen) {{
       return matchParen[1] + matchParen[3].trim() + '/' + matchParen[2].trim() + matchParen[4];
     }}
