@@ -327,36 +327,13 @@ def tr_multiline_block(text: str) -> str:
 
 
 def restart_application(current_window=None):
+    """Relance l'application sous Linux ou en mode script Python."""
     if current_window:
         try:
             current_window.close()
         except Exception:
             pass
 
-    # --- NETTOYAGE CRITIQUE POUR PYINSTALLER ONEFILE ---
-    # On supprime _MEIPASS et _MEIPASS2 de l'environnement Windows
-    # pour que la nouvelle instance crée son propre dossier temporaire neuf
-    for var in ('_MEIPASS', '_MEIPASS2'):
-        os.environ.pop(var, None)
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                ctypes.windll.kernel32.SetEnvironmentVariableW(var, None)
-            except Exception:
-                pass
-
-    # CAS 1 : Exécutable Windows (.exe compilé)
-    if sys.platform == "win32" and getattr(sys, 'frozen', False):
-        import ctypes
-        exe_path = sys.executable
-        working_dir = os.path.dirname(exe_path)
-        args_str = " ".join([f'"{a}"' for a in sys.argv[1:]])
-        
-        # Lancement via l'API Windows (indépendant et propre)
-        ctypes.windll.shell32.ShellExecuteW(None, "open", exe_path, args_str, working_dir, 1)
-        os._exit(0)
-
-    # CAS 2 : Script Python classique (.py) ou binaire Linux
     if getattr(sys, 'frozen', False):
         cmd = [sys.executable] + sys.argv[1:]
         working_dir = os.path.dirname(sys.executable)
@@ -364,10 +341,11 @@ def restart_application(current_window=None):
         cmd = [sys.executable] + sys.argv
         working_dir = BASE_DIR
 
-    if sys.platform == "win32":
-        subprocess.Popen(cmd, cwd=working_dir, shell=True)
-    else:
+    # Sous Linux : lancement propre et détaché
+    if sys.platform != "win32":
         subprocess.Popen(cmd, cwd=working_dir, start_new_session=True)
+    else:
+        subprocess.Popen(cmd, cwd=working_dir, shell=True)
 
     os._exit(0)
 
@@ -386,10 +364,29 @@ try:
         ]
         win = sg.Window("Language", layout, modal=True, keep_on_top=True)
         ev, val = win.read(close=True)
+        
         if ev == "-LANG_SAVE-":
             new_l = "fr" if val.get("r_fr") else "en"
             set_language(new_l)
-            restart_application(parent_window)
+
+            # CAS WINDOWS (Exécutable .exe) : Message clair et fermeture propre
+            if sys.platform == "win32" and getattr(sys, 'frozen', False):
+                msg = (
+                    "Langue modifiée avec succès !\nVeuillez redémarrer l'application pour appliquer les changements."
+                    if new_l == "fr" else
+                    "Language changed successfully!\nPlease restart the application to apply the changes."
+                )
+                sg.popup_ok(msg, title="Langue / Language", keep_on_top=True)
+                if parent_window:
+                    try:
+                        parent_window.close()
+                    except Exception:
+                        pass
+                sys.exit(0)
+            
+            # CAS LINUX OU SCRIPT PYTHON : Redémarrage automatique immédiat
+            else:
+                restart_application(parent_window)
 
     # 1. Patch de l'initialisation des boutons
     orig_button_init = sg.Button.__init__
