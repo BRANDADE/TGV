@@ -333,42 +333,33 @@ def restart_application(current_window=None):
         except Exception:
             pass
 
-    # 1. Détermination de la commande et du bon répertoire de travail
+    # CAS 1 : Exécutable Windows (.exe compilé)
+    # On utilise l'API native de Windows (ShellExecute) : zéro problème de verrou ni de subprocess
+    if sys.platform == "win32" and getattr(sys, 'frozen', False):
+        import ctypes
+        exe_path = sys.executable
+        working_dir = os.path.dirname(exe_path)
+        args_str = " ".join([f'"{a}"' for a in sys.argv[1:]])
+        
+        # 1 = SW_SHOWNORMAL (ouvre la nouvelle fenêtre normalement)
+        ctypes.windll.shell32.ShellExecuteW(None, "open", exe_path, args_str, working_dir, 1)
+        os._exit(0)
+
+    # CAS 2 : Script Python classique (.py) ou binaire Linux
     if getattr(sys, 'frozen', False):
-        # Mode exécutable compilé (PyInstaller)
         cmd = [sys.executable] + sys.argv[1:]
         working_dir = os.path.dirname(sys.executable)
     else:
-        # Mode script Python
         cmd = [sys.executable] + sys.argv
         working_dir = BASE_DIR
 
-    # 2. Configuration pour détacher complètement le processus sous Windows / Linux
-    kwargs = {
-        "cwd": working_dir,
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
-
     if sys.platform == "win32":
-        # Flags Windows pour rendre le nouveau processus totalement autonome
-        # 0x00000008 = DETACHED_PROCESS
-        # 0x00000200 = CREATE_NEW_PROCESS_GROUP
-        kwargs["creationflags"] = 0x00000008 | 0x00000200
-        kwargs["close_fds"] = True
+        # En mode script sous Windows
+        subprocess.Popen(cmd, cwd=working_dir, shell=True)
     else:
-        # Flags Linux / macOS
-        kwargs["start_new_session"] = True
+        # Sous Linux / macOS
+        subprocess.Popen(cmd, cwd=working_dir, start_new_session=True)
 
-    # 3. Lancement du nouveau processus détaché
-    try:
-        subprocess.Popen(cmd, **kwargs)
-    except Exception:
-        # Fallback simple au cas où
-        subprocess.Popen(cmd, cwd=working_dir)
-
-    # 4. Fermeture propre et immédiate de l'ancien processus
     os._exit(0)
 
 
