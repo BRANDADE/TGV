@@ -6,7 +6,7 @@
 
         // Sample karyotype
         // Default TRGT: "XX"
-        "karyotype": "XX",
+        //"karyotype": "XX",
 
         // Preset: "wgs" or "targeted"
         // Default TRGT: "targeted"
@@ -23,20 +23,16 @@
         "color": "auto",
 
         // Genotyping algorithm: "size" or "cluster"
-        // Default TRGT: "size"
-        "genotyper": "size",
+        //"genotyper": "size",
 
         // Minimum flanking sequence length
-        // Default TRGT: 300
-        "flank-len": 300,
+        //"flank-len": 300,
 
         // Maximum locus depth
-        // Default TRGT: 250
-        "max-depth": 250,
+        //"max-depth": 250,
 
         // Output flanking sequence length
-        // Default TRGT: 50
-        "output-flank-len": 50
+        //"output-flank-len": 50
     },
 
     // ==========================================
