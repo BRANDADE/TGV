@@ -333,15 +333,26 @@ def restart_application(current_window=None):
         except Exception:
             pass
 
+    # --- NETTOYAGE CRITIQUE POUR PYINSTALLER ONEFILE ---
+    # On supprime _MEIPASS et _MEIPASS2 de l'environnement Windows
+    # pour que la nouvelle instance crée son propre dossier temporaire neuf
+    for var in ('_MEIPASS', '_MEIPASS2'):
+        os.environ.pop(var, None)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetEnvironmentVariableW(var, None)
+            except Exception:
+                pass
+
     # CAS 1 : Exécutable Windows (.exe compilé)
-    # On utilise l'API native de Windows (ShellExecute) : zéro problème de verrou ni de subprocess
     if sys.platform == "win32" and getattr(sys, 'frozen', False):
         import ctypes
         exe_path = sys.executable
         working_dir = os.path.dirname(exe_path)
         args_str = " ".join([f'"{a}"' for a in sys.argv[1:]])
         
-        # 1 = SW_SHOWNORMAL (ouvre la nouvelle fenêtre normalement)
+        # Lancement via l'API Windows (indépendant et propre)
         ctypes.windll.shell32.ShellExecuteW(None, "open", exe_path, args_str, working_dir, 1)
         os._exit(0)
 
@@ -354,10 +365,8 @@ def restart_application(current_window=None):
         working_dir = BASE_DIR
 
     if sys.platform == "win32":
-        # En mode script sous Windows
         subprocess.Popen(cmd, cwd=working_dir, shell=True)
     else:
-        # Sous Linux / macOS
         subprocess.Popen(cmd, cwd=working_dir, start_new_session=True)
 
     os._exit(0)
