@@ -1,36 +1,38 @@
 # TGV — TRGT Global Viewer
 
+![Pipeline TGV](assets/workflow_simple.png)
+
 <details open>
   <summary><b>🇫🇷 Version Française (Cliquez pour replier)</b></summary>
   <br>
 
-**TGV (TRGT Global Viewer)** est une application Python dotée d'une interface graphique simple, conçue au CHU de Nîmes pour faciliter l'analyse, le contrôle qualité et l'interprétation clinique des résultats de génotypage de répétitions en tandem issus de la technologie PacBio [3].
+**TGV (TRGT Global Viewer)** est un outil de visualisation clinique conçu pour le CHU de Nîmes. Il simplifie l'analyse, le contrôle qualité et l'interprétation des répétitions en tandem issues du workflow **TRGT (PacBio SMRT Link)** [3].
 
 ---
 
 ### 🧬 Contexte Clinique & Vision "Zéro Désarchivage"
 
-* **Le défi diagnostique** : L'analyse des expansions de répétitions en tandem (comme dans le cas des ataxies) repose sur le séquençage HiFi de haute précision à longues lectures (séquenceur **PacBio Vega**). Si l'outil TRGT offre un profilage génomique puissant, les données brutes générées sont denses, éparpillées et complexes à manipuler.
+* **Le défi diagnostique** : L'analyse des expansions de répétitions en tandem (ex: ataxies) repose sur le séquençage HiFi de haute précision à longues lectures (séquenceur **PacBio Vega**). Si l'outil TRGT offre un profilage génomique puissant, les données brutes générées sont denses, éparpillées et complexes à manipuler.
 * **La vision "Zéro désarchivage manuel" (Ergonomie)** : Au quotidien, manipuler et décompresser manuellement des dizaines d'archives ZIP volumineuses (fichiers BAM de plusieurs centaines de mégaoctets, graphiques d'allèles ou de méthylation) est une tâche lourde. **TGV résout ce problème en lisant et en traitant toutes les données directement à la volée en arrière-plan, sans aucune décompression manuelle préalable sur le disque dur de l'utilisateur.**
 
 ---
 
 ### 📋 Caractéristiques principales
 
-* **Interface graphique (GUI) intuitive** : Permet de charger vos données, de filtrer vos patients ou vos locus d'intérêt (TRIDs), et de modifier les seuils cliniques ou les génotypes directement à l'écran.
+* **Interface graphique (GUI) intuitive** :  Chargement des données, filtrage par patient ou locus (TRID), et édition dynamique des seuils cliniques ou génotypes.
 * **Cochage automatique par panel** : Intègre un système de boutons configurables permettant de sélectionner automatiquement en un clic des listes de gènes d'intérêt (panels in silico) définies par l'utilisateur.
-* **Visualisation d'alignements (igv.js)** : Extrait automatiquement les reads d'intérêt (`spanning_BAM` et `repeat_reads`) et ouvre une session IGV locale directement dans votre navigateur web pour inspecter les alignements.
-* **Affichage de graphiques TRGT (SVG)** : Détecte et affiche les graphiques d'allèles et de méthylation (générés par l'outil de dessin de TRGT) directement depuis l'interface de détails, sans décompression manuelle préalable.
-* **Rapport de contrôle qualité global (QC)** : Génère à la volée une vue d'ensemble de la qualité d'enrichissement du run (graphiques et couverture des cibles) sous forme de rapport HTML consultable immédiatement, sans créer de fichier permanent sur votre disque de travail.
-* **Traçabilité par fichier de logs** : À chaque lancement d'analyse, un fichier de log structuré et horodaté à la seconde près est enregistré dans le dossier `logs/`. Il contient les versions utilisées, les fichiers d'entrée, les étapes du pipeline et les éventuels avertissements de fichiers manquants.
-* **Zéro empreinte disque** : Tous les fichiers de visualisation et rapports d'enrichissement sont créés de manière temporaire. À la fermeture de TGV, l'application exécute un nettoyage automatique garanti (bloc `finally` de l'application) qui supprime tous ces fichiers temporaires de votre disque dur [3].
-* **Léger et portable** : Développé sans bibliothèque lourde (pas de Pandas, NumPy ou Jinja2). Il peut être partagé sous forme d'un exécutable unique sous Windows (sans installation), ou lancé comme un simple script Python sous Linux/macOS.
+* **Visualisation d'alignements (igv.js)** :  Extraction automatique des bams (spanning_BAM / repeat_reads) et ouverture d'une session IGV locale dans votre navigateur pour une inspection immédiate.
+* **Affichage de graphiques TRGT (SVG)** : Rendu direct des profils d'allèles et de méthylation générés par l'outil TRVZ (TRGT), sans extraction manuelle.
+* **Rapport de contrôle qualité global (QC)** : Rapport HTML généré à la volée pour visualiser la qualité d'enrichissement du run. Note : QC produit via le module tgv_inputs_builder.py.
+* **Traçabilité par fichier de logs** : Chaque analyse génère un journal structuré et horodaté dans logs/ (versions, entrées, étapes du pipeline et alertes).
+* **Zéro empreinte disque** : Création de fichiers temporaires uniquement. Un nettoyage automatique est garanti à la fermeture de l'application [3].
+* **Léger et portable** : Développé sans dépendances lourdes (pas de Pandas, NumPy ou Jinja2). Disponible en exécutable autonome (Windows) ou script léger (Linux/macOS).
 
 ---
 
 ### 🚀 Comment l'utiliser (Usage)
 
-L'outil **TGV** s'adaptant à votre environnement de travail, il peut être lancé de deux manières différentes :
+L'outil **TGV** s'adapte à votre environnement via deux modes d'exécution :
 
 #### Option A : Sous Windows (Exécutable autonome)
 Destiné aux cliniciens et biologistes sur poste de travail Windows.
@@ -73,12 +75,13 @@ TGV détecte automatiquement les archives associées présentes dans le même r�
 
 *Fonctionnement interne : Lors de la sélection d'un patient et d'un locus, TGV ouvre l'archive globale du run correspondante en mémoire, y recherche le fichier spécifique du patient (par exemple `nom_patient.sorted.spanning.bam`), l'extrait de manière temporaire pour l'analyse, puis nettoie le disque à la fermeture [3].*
 
-#### 3. Données de Run QC (Niveau Plaque — Rapport global d'enrichissement)
-Pour afficher le rapport d'enrichissement global de run, l'utilisateur fournit l'archive d'analyse **`{id}-QC.zip`** contenant [3] :
-* Le rapport d'enrichissement : `target_enrichment_puretarget.report.json`
-* Le résumé des échantillons : `sample_summary.csv`
-* La couverture par cible : `target_cov_by_sample.csv`
-* Les graphiques PNG correspondants (ex: `sample_coverage_boxplot-0.png`, `read_categories.png`). *Les miniatures de type `*_thumb.png` sont ignorées.* [3]
+#### 3. Rapport de Contrôle Qualité (Module exclusif TGV)
+Ce rapport, qui n'est pas généré nativement par SMRT Link/TRGT, est **produit spécifiquement par votre script tgv_inputs_builder.py** à partir des données brutes du run. Il permet une supervision globale que le workflow standard ne propose pas.
+L'archive **{id}-QC.zip** (générée par le builder) contient :
+* **Rapport d'enrichissement** : target_enrichment_puretarget.report.json
+* **Synthèse échantillons** : sample_summary.csv
+* **Couverture par cible** : target_cov_by_sample.csv
+* **Visualisations** : Graphiques PNG (ex: sample_coverage_boxplot-0.png, read_categories.png).
 
 ---
 
@@ -93,127 +96,86 @@ TGV est hautement configurable pour s'adapter aux besoins spécifiques de votre 
 
 ### 🛠️ Organisation des fichiers de logs
 
-Les fichiers de logs techniques sont sauvegardés automatiquement à côté de l'exécutable dans le sous-dossier `logs/`. Ils sont nommés sous la forme :  
-`TGV_run_ANNEEMOISJOUR_HEUREMINUTESECONDE.log` (ex: `TGV_run_20260612_145002.log`).
+Pour assurer une traçabilité complète de vos analyses, **TGV** génère automatiquement des journaux horodatés dans le sous-dossier `logs/` :
+
+*   **Pour l'analyse clinique (TGV GUI/CLI)** :
+    `TGV_run_ANNEEMOISJOUR_HEUREMINUTESECONDE.log` (ex: `TGV_run_20260612_145002.log`)
+*   **Pour la préparation des données (Builder)** :
+    `tgv_input_builder.ANNEEMOISJOUR_HEUREMINUTESECONDE.log` (ex: `tgv_input_builder.20260922135222.log`)
+
+Ces fichiers permettent un audit précis des versions utilisées, des fichiers sources et des éventuels avertissements rencontrés durant le traitement.
 
 </details>
 
 <br>
 
 <details>
-  <summary><b>🇬🇧 English Version (Click to expand)</b></summary>
+  <summary><b>🇬🇧 English Version</b></summary>
   <br>
 
-**TGV (TRGT Global Viewer)** is a Python-based graphical user interface (GUI) designed at the Nîmes University Hospital (CHU de Nîmes) to facilitate the analysis, quality control, and clinical interpretation of tandem repeat genotyping results generated by the **TRGT** tool (PacBio) [3].
+**TGV (TRGT Global Viewer)** is a clinical visualization tool designed for Nîmes University Hospital. It streamlines analysis, quality control, and interpretation of tandem repeats from the **TRGT (PacBio SMRT Link)** workflow [3].
 
 ---
 
 ### 🧬 Clinical Context & "Zero Extraction" Philosophy
 
-* **The diagnostic challenge**: Interpreting expansions of tandem repeats (such as in spinocerebellar ataxias) relies on high-precision long-read HiFi sequencing (using the **PacBio Vega** sequencer). While TRGT provides powerful genomic profiling, the raw outputs are dense, scattered, and complex to manipulate.
-* **The "Zero manual extraction" philosophy (Ergonomics)**: Handling, unarchiving, and organizing dozens of heavy ZIP archives on a daily basis (such as BAM files of several hundred megabytes, allele plots, or methylation graphs) is tedious. **TGV solves this by processing and reading all data on-the-fly in the background, without requiring any manual unarchiving on the user's hard drive.**
+* **The diagnostic challenge**: Interpreting expansions of tandem repeats relies on high-precision HiFi sequencing (**PacBio Vega** sequencer). While TRGT provides powerful genomic profiling, raw outputs are dense and complex to handle.
+* **The "Zero manual extraction" philosophy (Ergonomics)**: Handling dozens of heavy ZIP archives daily (BAM files, allele plots, methylation data) is tedious. **TGV processes all data on-the-fly in the background, eliminating the need for manual unarchiving on your local drive.**
 
 ---
 
 ### 📋 Main Features
 
-* **Intuitive Graphical User Interface (GUI)**: Easily load data, filter patients or loci of interest (TRIDs), and adjust clinical thresholds or genotypes directly on screen.
-* **Automated Panel Selection**: Features a customizable button panel to automatically select pre-defined lists of genes of interest (in silico panels) in a single click.
-* **Alignment Visualization (igv.js)**: Automatically extracts reads of interest (`spanning_BAM` and `repeat_reads`) and launches a local IGV session directly in your web browser. A minimal HTTP server supporting *Range Requests* runs in the background to smoothly stream large BAM files.
-* **TRGT Graphics Display (SVG)**: Detects and renders allele and methylation graphs (generated by the TRGT plotting tool) directly from the details panel, with no manual extraction required.
-* **Global Run Quality Control (QC)**: Generates a comprehensive view of the run's enrichment quality (plots and target coverage) as an HTML report on-the-fly, without creating permanent files on your workspace.
-* **Traceability and Logging**: A structured, second-precision log file is saved in the `logs/` directory for each analysis run. It records software versions, input files, pipeline execution steps, and warnings about missing optional files.
-* **Zero Disk Footprint**: All visualization and QC report files are created temporarily. Upon closing TGV, an automated cleanup routine (via the application's `finally` block) cleans up all these temporary files from your hard drive [3].
-* **Lightweight and Portable**: Developed without heavy libraries (no Pandas, NumPy, or Jinja2). It can be shared as a single executable on Windows (no installation needed), or run as a simple Python script on Linux/macOS.
+* **Intuitive GUI**: Easily load data, filter patients or loci (TRIDs), and adjust clinical thresholds or genotypes.
+* **Automation Modules**: 
+    * **`tgv_inputs_builder.py`**: Automates archive structuring and QC report generation.
+    * **`tgv_cli.py`**: Command-line interface for batch processing and pipeline integration.
+* **Alignment Visualization (igv.js)**: Automated BAM extraction with an embedded HTTP server (Range Requests) for smooth inspection.
+* **TRGT Graphics Display (SVG)**: Direct rendering of allele/methylation plots (TRVZ tool) with no manual extraction.
+* **Global Run QC**: On-the-fly HTML quality report (generated via `tgv_inputs_builder.py`).
+* **Traceability & Logs**: Structured, timestamped logs for both the GUI and the Builder in `logs/`.
+* **Zero Disk Footprint**: Automated cleanup of temporary files upon exit [3].
+* **Lightweight & Portable**: No heavy dependencies (no Pandas/NumPy). Portable executable (Windows) or simple script (Linux/macOS).
 
 ---
 
 ### 🚀 How to use (Usage)
 
-The **TGV** tool adapting to your work environment, it can be launched in two different ways:
+**TGV** adapts to your work environment through two execution modes:
 
-#### Option A: On Windows (Standalone executable)
+#### Option A: Windows (Standalone executable)
 Aimed at clinicians and biologists on Windows workstations.
-1. Download the standalone executable **`TGV.exe`** from the *Releases* tab of this GitHub repository.
-2. Double-click the executable to launch the application. 
-*No Python installation or library setup is required.*
+1. Download the standalone **`TGV.exe`** from the *Releases* tab.
+2. Double-click to launch.
 
-#### Option B: On Linux / macOS (Command-line usage)
+#### Option B: Linux / macOS (Command-line usage)
 Aimed at bioinformaticians or server environment usage.
-
-1. Install the two required lightweight dependencies:
-   ```bash
-   pip install PySimpleGUI-4-foss pyyaml
-   ```
-2. Launch the application:
-   ```bash
-   python main.py
-   ```
+1. Install dependencies: `pip install PySimpleGUI-4-foss pyyaml`
+2. GUI Mode: `python main.py` | CLI Mode: `python tgv_cli.py --help`
 
 ---
 
 ### 📂 Input Specifications
 
-To operate transparently without prior manual extraction, **TGV** relies on a standardized, **Run-level archive structure** (individual sample files are stored inside global run-level ZIP archives):
-
-#### 1. General Files (Manual selection on the GUI)
-* **TRGT VCF Archive (`{ID_RUN}-trgt_vcfs.zip`)**: The primary ZIP archive containing all the `.trgt.vcf` files of the run (one VCF file per sample).
-* **Reference Genome (Optional)**: The reference genome file in `.fa` or `.fasta` format accompanied by its `.fai` index file (e.g., `hg38.fa` and `hg38.fa.fai`).
-
-#### 2. Automatically Detected Run Archives (Sister ZIPs)
-TGV automatically detects associated run archives present in the same directory, provided they share the exact same run prefix (`{ID_RUN}-`):
-* **Alignment Files (BAM)**:
-  * `{ID_RUN}-spanning_BAM.zip`: Contains the *spanning* BAM/BAI files for all patients in the run.
-  * `{ID_RUN}-repeat_reads.zip`: Contains the *mapped* BAM/BAI files for all patients in the run.
-* **TRGT Graphics (SVG)**:
-  * `{ID_RUN}-trgt_motifs_allele.zip`: Contains the motif allele size profiles for all patients in the run.
-  * `{ID_RUN}-trgt_motifs_waterfall.zip`: Contains the motif waterfall plots for all patients in the run.
-  * `{ID_RUN}-trgt_meth_allele.zip`: Contains the allele-specific methylation profiles for all patients in the run.
-  * `{ID_RUN}-trgt_meth_waterfall.zip`: Contains the methylation waterfall plots for all patients in the run.
-
-*Internal behavior: When a patient and a locus are selected, TGV opens the corresponding global run archive in-memory, searches for the patient's specific file (e.g., `patient_name.sorted.spanning.bam`), extracts it temporarily for the analysis, and cleans up the disk on exit [3].*
-
-#### 3. Run QC Data (Plate-level — Global Enrichment Report)
-To display the global run enrichment report, the user provides the **`{id}-QC.zip`** analysis archive containing [3]:
-* The enrichment report: `target_enrichment_puretarget.report.json`
-* The sample summary: `sample_summary.csv`
-* The target coverage: `target_cov_by_sample.csv`
-* The corresponding PNG plots (e.g., `sample_coverage_boxplot-0.png`, `read_categories.png`). *Thumbnail images (`*_thumb.png`) are automatically ignored.* [3]
+**TGV** relies on standardized Run-level ZIP archives:
+* **Manual Inputs (GUI)**: TRGT VCF archive (`{ID_RUN}-trgt_vcfs.zip`) and optional Reference Genome.
+* **Auto-detected Sister ZIPs**: Alignment files (`spanning_BAM`, `repeat_reads`) and TRGT plot archives (`motifs_allele`, `motifs_waterfall`, `meth_allele`, `meth_waterfall`).
+* **QC Report (Exclusive TGV Module)**: Archive `{id}-QC.zip` (produced by `tgv_inputs_builder.py`) containing enrichment reports, summaries, and coverage plots.
 
 ---
 
 ### ⚙️ Configuration & Customization
 
-TGV is highly configurable to meet your diagnostic laboratory's specific needs through two YAML configuration files located in the **`configs/`** directory:
-
-* **`clinical_thresholds.yaml`** (`configs/`): Clinical reference file. It defines, for each disease/locus (TRID), the repeat size ranges to classify alleles (Benign, Permutation, Pathogenic) and the motif strand orientation (Forward or Reverse-Complement).
-* **`buttons_panel.yaml`** (`configs/`): Allows customizing the GUI by dynamically creating selection buttons. You can define custom panels (e.g., "Ataxias", "Myopathies") and list the associated TRIDs to check them automatically in a single click on screen.
+* **`clinical_thresholds.yaml`**: Defines clinical size ranges and motif strand orientation.
+* **`buttons_panel.yaml`**: Allows customizing the GUI with dynamic buttons for specific gene panels (e.g., "Ataxias").
 
 ---
 
 ### 🛠️ Logs Directory Organization
 
-Technical log files are automatically saved next to the executable in the `logs/` subdirectory. They are named as follows:  
-`TGV_run_YYYYMMDD_HHMMSS.log` (e.g., `TGV_run_20260612_145002.log`).
-
-</details>
-
-<br>
-
-<details>
-  <summary><b>💻 Déploiement & Compilation / Deployment & Compilation (Developer)</b></summary>
-  <br>
-
-Le projet utilise un workflow sur GitHub Actions pour compiler l'exécutable Windows. Ce processus est configuré pour être déclenché uniquement de manière manuelle depuis l'onglet **Actions** de GitHub.
-
-The project uses a GitHub Actions workflow to compile the Windows executable. This process is configured to be triggered only manually from the **Actions** tab on GitHub.
-
-### Pour compiler manuellement sous Windows / To compile manually on Windows :
-```bash
-pip install pyinstaller PySimpleGUI-4-foss pyyaml
-pyinstaller --onefile --windowed main.py --hidden-import yaml --add-data "scripts/bio/motifs_data.yaml;scripts/bio" --add-data "configs;configs" --add-data "assets;assets"
-```
-L'exécutable `main.exe` sera généré dans le répertoire `dist/`. / The standalone `main.exe` executable will be generated in the `dist/` directory.
+For full auditability, **TGV** generates timestamped logs in the `logs/` subdirectory:
+*   **Clinical Analysis (GUI/CLI)**: `TGV_run_YYYYMMDD_HHMMSS.log`
+*   **Data Preparation (Builder)**: `tgv_input_builder.YYYYMMDD_HHMMSS.log`
 
 </details>
 
