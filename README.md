@@ -6,7 +6,7 @@
   <summary><b>🇫🇷 Version Française (Cliquez pour replier)</b></summary>
   <br>
 
-**TGV (TRGT Global Viewer)** est un outil de visualisation clinique conçu pour le CHU de Nîmes. Il simplifie l'analyse, le contrôle qualité et l'interprétation des répétitions en tandem issues du workflow **TRGT (PacBio SMRT Link)** [3].
+**TGV (TRGT Global Viewer)** est un outil de visualisation clinique conçu pour le CHU de Nîmes. Il simplifie l'analyse, le contrôle qualité et l'interprétation des répétitions en tandem issues du workflow **TRGT (PacBio SMRT Link)**.
 
 ---
 
@@ -25,7 +25,7 @@
 * **Affichage de graphiques TRGT (SVG)** : Rendu direct des profils d'allèles et de méthylation générés par l'outil TRVZ (TRGT), sans extraction manuelle.
 * **Rapport de contrôle qualité global (QC)** : Rapport HTML généré à la volée pour visualiser la qualité d'enrichissement du run. Note : QC produit via le module tgv_inputs_builder.py.
 * **Traçabilité par fichier de logs** : Chaque analyse génère un journal structuré et horodaté dans logs/ (versions, entrées, étapes du pipeline et alertes).
-* **Zéro empreinte disque** : Création de fichiers temporaires uniquement. Un nettoyage automatique est garanti à la fermeture de l'application [3].
+* **Zéro empreinte disque** : Création de fichiers temporaires uniquement. Un nettoyage automatique est garanti à la fermeture de l'application.
 * **Léger et portable** : Développé sans dépendances lourdes (pas de Pandas, NumPy ou Jinja2). Disponible en exécutable autonome (Windows) ou script léger (Linux/macOS).
 
 ---
@@ -73,7 +73,7 @@ TGV détecte automatiquement les archives associées présentes dans le même r�
   * `{ID_RUN}-trgt_meth_allele.zip` : Archives de méthylation allèle-spécifique de tous les patients.
   * `{ID_RUN}-trgt_meth_waterfall.zip` : Archives de profils de reads *waterfall* de méthylation de tous les patients.
 
-*Fonctionnement interne : Lors de la sélection d'un patient et d'un locus, TGV ouvre l'archive globale du run correspondante en mémoire, y recherche le fichier spécifique du patient (par exemple `nom_patient.sorted.spanning.bam`), l'extrait de manière temporaire pour l'analyse, puis nettoie le disque à la fermeture [3].*
+*Fonctionnement interne : Lors de la sélection d'un patient et d'un locus, TGV ouvre l'archive globale du run correspondante en mémoire, y recherche le fichier spécifique du patient (par exemple `nom_patient.sorted.spanning.bam`), l'extrait de manière temporaire pour l'analyse, puis nettoie le disque à la fermeture.*
 
 #### 3. Rapport de Contrôle Qualité (Module exclusif TGV)
 Ce rapport, qui n'est pas généré nativement par SMRT Link/TRGT, est **produit spécifiquement par votre script tgv_inputs_builder.py** à partir des données brutes du run. Il permet une supervision globale que le workflow standard ne propose pas.
@@ -113,7 +113,7 @@ Ces fichiers permettent un audit précis des versions utilisées, des fichiers s
   <summary><b>🇬🇧 English Version</b></summary>
   <br>
 
-**TGV (TRGT Global Viewer)** is a clinical visualization tool designed for Nîmes University Hospital. It streamlines analysis, quality control, and interpretation of tandem repeats from the **TRGT (PacBio SMRT Link)** workflow [3].
+**TGV (TRGT Global Viewer)** is a clinical visualization tool designed for Nîmes University Hospital. It streamlines analysis, quality control, and interpretation of tandem repeats from the **TRGT (PacBio SMRT Link)** workflow.
 
 ---
 
@@ -134,7 +134,7 @@ Ces fichiers permettent un audit précis des versions utilisées, des fichiers s
 * **TRGT Graphics Display (SVG)**: Direct rendering of allele/methylation plots (TRVZ tool) with no manual extraction.
 * **Global Run QC**: On-the-fly HTML quality report (generated via `tgv_inputs_builder.py`).
 * **Traceability & Logs**: Structured, timestamped logs for both the GUI and the Builder in `logs/`.
-* **Zero Disk Footprint**: Automated cleanup of temporary files upon exit [3].
+* **Zero Disk Footprint**: Automated cleanup of temporary files upon exit.
 * **Lightweight & Portable**: No heavy dependencies (no Pandas/NumPy). Portable executable (Windows) or simple script (Linux/macOS).
 
 ---
@@ -176,6 +176,32 @@ Aimed at bioinformaticians or server environment usage.
 For full auditability, **TGV** generates timestamped logs in the `logs/` subdirectory:
 *   **Clinical Analysis (GUI/CLI)**: `TGV_run_YYYYMMDD_HHMMSS.log`
 *   **Data Preparation (Builder)**: `tgv_input_builder.YYYYMMDD_HHMMSS.log`
+
+</details>
+
+<br>
+
+<details>
+  <summary><b>📚 Références & Outils tiers / References & Third-Party Tools</b></summary>
+  <br>
+
+#### 🇫🇷 Références & Outils tiers
+Si vous utilisez **TGV** dans le cadre de vos travaux cliniques ou de recherche, veuillez citer les outils sous-jacents :
+
+* **TRGT / TRVZ** :
+  > Dolzhenko, E., English, A., Dashnow, H., *et al.* Characterization and visualization of tandem repeats at genome scale. *Nat Biotechnol* (2024). [https://doi.org/10.1038/s41587-023-02057-3](https://doi.org/10.1038/s41587-023-02057-3)
+* **igv.js** :
+  > Robinson, J. T., Thorvaldsdóttir, H., Turner, D., & Mesirov, J. P. igv.js: an embeddable JavaScript implementation of the Integrative Genomics Viewer (IGV). *Bioinformatics*, 39(1), btac830 (2023). [https://doi.org/10.1093/bioinformatics/btac830](https://doi.org/10.1093/bioinformatics/btac830)
+
+---
+
+#### 🇬🇧 References & Third-Party Tools
+If you use **TGV** for clinical work or scientific publications, please acknowledge the underlying tools:
+
+* **TRGT / TRVZ**:
+  > Dolzhenko, E., English, A., Dashnow, H., *et al.* Characterization and visualization of tandem repeats at genome scale. *Nat Biotechnol* (2024). [https://doi.org/10.1038/s41587-023-02057-3](https://doi.org/10.1038/s41587-023-02057-3)
+* **igv.js**:
+  > Robinson, J. T., Thorvaldsdóttir, H., Turner, D., & Mesirov, J. P. igv.js: an embeddable JavaScript implementation of the Integrative Genomics Viewer (IGV). *Bioinformatics*, 39(1), btac830 (2023). [https://doi.org/10.1093/bioinformatics/btac830](https://doi.org/10.1093/bioinformatics/btac830)
 
 </details>
 
