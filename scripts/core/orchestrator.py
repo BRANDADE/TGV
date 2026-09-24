@@ -12,7 +12,7 @@ from scripts.core.rows import build_row_simple, build_row_clinical
 
 from scripts.bio.motif_structure import decompose_repetition_without_interruptions, decompose_repetition_with_interruptions
 from scripts.bio.clinical_classifier import clinical_group
-from scripts.bio.labels import ABSENT, ABSENT_DISPLAY
+from scripts.bio.labels import ABSENT, ABSENT_DISPLAY, UNCLASSIFIED, NOTE_MOTIF_DISCORDANCE, label_score
 
 
 def to_int(value):
@@ -60,6 +60,7 @@ def process_result(analysis_input):
 
         # 1) RAW TRGT
         fill_raw_base(result, trid_id, trid_global, a1, a2)
+        result.has_clinical = trid_global.clinical is not None
 
         # 2) Clinique si applicable
         if trid_global.clinical:
@@ -126,7 +127,6 @@ def process_clinical(analysis_input):
     (affichage à la charge de l'appelant : popup dans l'interface, log en CLI).
     """
     label_priority = analysis_input.label_priority
-    max_score = max(label_priority.values())
 
     logging.info(f"Executing clinical guidelines evaluation for sample: '{analysis_input.sample_name}'")
 
@@ -164,6 +164,9 @@ def process_clinical(analysis_input):
             logging.debug(f"  Sequence preview: {allele.sequence.sequence[:50]}...")
 
             allele.trgt_groups = {}
+            allele.clinical = None
+            allele.clinical_label = None
+            allele.clinical_note = None
 
             best_group = None
             best_score = -1
@@ -189,16 +192,16 @@ def process_clinical(analysis_input):
                     allele.trgt_groups[group_id] = None
                     continue
 
-                # Classification clinique
-                clinical_label = clinical_group(
+                # Classification clinique (jamais de repli silencieux sur 'normal')
+                clinical_label, clinical_note = clinical_group(
                     data_group=data,
                     clinical_group=group,
                     repeat_mode=repeat_mode,
                     classification_mode=classification_mode,
-                    label_priority=label_priority
                 )
 
                 data.clinical = clinical_label
+                data.clinical_note = clinical_note
 
                 # Debug
                 logging.debug(f"  Clinical group evaluation details - Group: {group_id} | Motifs: {group.motifs}")
@@ -207,7 +210,7 @@ def process_clinical(analysis_input):
                 allele.trgt_groups[group_id] = data
 
                 # Score clinique
-                score = label_priority.get(clinical_label)
+                score = label_score(clinical_label, label_priority)
                 
                 # Total repeats clinique
                 if data.total_main_count_with is not None:
@@ -229,16 +232,21 @@ def process_clinical(analysis_input):
                         best_group = group_id
                         best_repeats = total_repeats
 
-            # --- Aucun groupe valide trouvé ---
+            # --- Aucun groupe valide trouvé : allèle conservé, marqué non classable ---
             if best_group is None:
                 logging.error(f"No valid clinical threshold group resolved for allele {idx} of locus '{trid_id}'.")
-                allele.clinical = None
+                allele.clinical_label = UNCLASSIFIED
+                allele.clinical_note = NOTE_MOTIF_DISCORDANCE
                 discordances.append(trid_id)
                 continue
 
             # Stockage du groupe gagnant
             allele.clinical = allele.trgt_groups[best_group]
+            allele.clinical_label = allele.clinical.clinical
+            allele.clinical_note = allele.clinical.clinical_note
             allele.clinical_motifs = motif_groups[best_group].motifs
+            if allele.clinical_label == UNCLASSIFIED:
+                logging.warning(f"Allele {idx} of locus '{trid_id}' is unclassified: {allele.clinical_note}.")
 
     discordances = sorted(set(discordances))
     if discordances:

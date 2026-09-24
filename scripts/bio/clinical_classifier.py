@@ -1,7 +1,23 @@
-def clinical_group(data_group, clinical_group, repeat_mode, classification_mode, label_priority):
+from scripts.bio.labels import UNCLASSIFIED, NOTE_OUT_OF_RANGE, note_overlap
+
+
+def in_range(value, bounds):
+    """Bornes inclusives [min, max], None = non borné."""
+    min_v, max_v = bounds
+    if min_v is not None and value < min_v:
+        return False
+    if max_v is not None and value > max_v:
+        return False
+    return True
+
+
+def clinical_group(data_group, clinical_group, repeat_mode, classification_mode):
     """
     Classification clinique d'un SEUL groupe.
-    Retourne uniquement le label clinique final.
+    Retourne (label, note) ; note est None sauf pour 'unclassified'.
+
+    Aucun repli silencieux : une valeur hors de toute plage, ou couverte par
+    plusieurs plages de labels différents, donne 'unclassified'.
     """
 
     # 1) repeat_count clinique selon le repeat_mode du groupe
@@ -10,47 +26,33 @@ def clinical_group(data_group, clinical_group, repeat_mode, classification_mode,
     else:
         repeat_count = data_group.total_main_count_without
 
-    label = None
-
-    # 2) Mode structural → structure_rules d'abord
+    # 2) Mode structural → structure_rules d'abord (la première règle valide gagne)
     if classification_mode == "structural" and clinical_group.structure_rules:
         has_interruptions = (data_group.i_count > 0)
 
         for rule in clinical_group.structure_rules:
             cond = rule["conditions"]
 
-            rmin, rmax = cond["repeat_range"]
-            interruptions_required = cond.get("interruptions", None)
-
-            # Vérification du repeat_range
-            if rmin is not None and repeat_count < rmin:
-                continue
-            if rmax is not None and repeat_count > rmax:
+            if not in_range(repeat_count, cond["repeat_range"]):
                 continue
 
             # Vérification interruptions
-            if interruptions_required is not None:
-                if interruptions_required and not has_interruptions:
-                    continue
-                if not interruptions_required and has_interruptions:
-                    continue
-
-            # Première règle valide
-            label = cond["classification"]
-            break
-
-    # 3) Fallback thresholds si aucune structure_rule n'a matché
-    if label is None:
-        for lbl, (min_v, max_v) in clinical_group.thresholds.items():
-            if min_v is not None and repeat_count < min_v:
+            interruptions_required = cond.get("interruptions", None)
+            if interruptions_required is not None and interruptions_required != has_interruptions:
                 continue
-            if max_v is not None and repeat_count > max_v:
-                continue
-            label = lbl
-            break
 
-    # 4) Si rien ne matche → label de priorité la plus basse
-    if label is None:
-        label = min(label_priority, key=label_priority.get)
+            return cond["classification"], None
 
-    return label
+    # 3) Thresholds : toutes les plages sont examinées pour détecter les chevauchements
+    matching = []
+    for lbl, bounds in clinical_group.thresholds.items():
+        if in_range(repeat_count, bounds) and lbl not in matching:
+            matching.append(lbl)
+
+    if len(matching) == 1:
+        return matching[0], None
+    if len(matching) > 1:
+        return UNCLASSIFIED, note_overlap(matching)
+
+    # 4) Aucune plage : non classable (jamais 'normal' par défaut)
+    return UNCLASSIFIED, NOTE_OUT_OF_RANGE

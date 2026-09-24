@@ -16,23 +16,15 @@ except ImportError:
             def tr(text: str) -> str:
                 return text
 
+from scripts.core.comments import LOW_COVERAGE, result_comments
+
 try:
     import PySimpleGUI as sg
 except ImportError:
     sg = None
 
 
-def is_low_coverage(r_dict):
-    for key, val in r_dict.items():
-        if key in ["Result_obj", "Details_obj"]:
-            continue
-        val_str = str(val)
-        if "⚠️" in val_str or "\u26a0" in val_str:
-            return True
-    return False
-
-
-def generate_html_table(headers, rows, sample_name, run_id=None):
+def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_threshold=None):
     logging.info(f"Generating export HTML table for patient '{sample_name}' with {len(rows)} selected rows.")
 
     headers = list(headers)
@@ -53,7 +45,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None):
         row_html += "<td class='col-checkbox'><input type='checkbox' class='row-checkbox' checked></td>"
         
         r_obj = r_dict.get("Result_obj")
-        is_low = is_low_coverage(r_dict)
+        comments = result_comments(r_obj, low_depth_threshold) if r_obj else []
 
         is_classif_modified = False
         if r_obj:
@@ -72,7 +64,8 @@ def generate_html_table(headers, rows, sample_name, run_id=None):
 
         for h in headers:
             if h in ("Commentaires", comments_label):
-                comment_val = tr("Couverture faible") if is_low else ""
+                # Seul le libellé fixe est traduit : les notes sont des données copiées vers le SIL
+                comment_val = "; ".join(tr(c) if c == LOW_COVERAGE else c for c in comments)
                 row_html += f"<td><span contenteditable='true' class='comment-input' data-placeholder=\"{tr('Ajouter un commentaire...')}\">{comment_val}</span></td>"
             else:
                 val = r_dict.get(h, '')

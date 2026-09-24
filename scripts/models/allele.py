@@ -29,6 +29,10 @@ class Allele:
         self.clinical_motifs = None
         self.clinical = None
 
+        # Label final et raison éventuelle d'un 'unclassified' (y compris sans groupe gagnant)
+        self.clinical_label = None
+        self.clinical_note = None
+
     @property
     def is_called(self):
         return self.status == CALLED

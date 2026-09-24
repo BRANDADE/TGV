@@ -519,27 +519,20 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                 win.close()
 
         if ev == "-EXPORT-DATA-":
-            rows_export = []
-            for r in rows:
-                classif = r["Classification"]
-                if not classif:
-                    continue
-                parts = [x.strip() for x in classif.split("/")]
-                if len(parts) != 2:
-                    continue
-                a1, a2 = parts
-                if a1 != "None" or a2 != "None":
-                    rows_export.append(r)
+            # Seuls les loci sans configuration clinique sont exclus : un locus non classé
+            # ('unclassified', 'no_call') reste exporté avec son explication en commentaire.
+            rows_export = [r for r in rows if r["Result_obj"].has_clinical]
 
             if not rows_export:
-                sg.popup("Aucune ligne avec classification définie à exporter.")
+                sg.popup("Aucun locus avec configuration clinique à exporter.")
                 continue
 
             html = generate_html_table(
                 ["Locus", "Profondeur", "Génotype", "Classification"],
                 rows_export,
                 sample_name,
-                run_id=run_id 
+                run_id=run_id,
+                low_depth_threshold=low_depth_threshold,
             )
             save_and_open_html(html)
 

@@ -6,20 +6,18 @@ import re
 import logging
 
 from scripts.models.run import Run
-from scripts.models.trid import TRID
 from scripts.models.dto import AnalysisInput
 
 from scripts.core.vcf_loader import list_vcfs
 from scripts.core.vcf_parser import parse_vcf_for_sample
 from scripts.core.utils import get_analysis_prefix
 from scripts.core.artifact_lookup import sample_id_from_vcf_name
-from scripts.core.sequence_utils import reverse_complement
-from scripts.core.trid_detector import autodetect_trids
 from scripts.core.config_manager import get_safe_config_path
 from scripts.core.orchestrator import process_clinical, process_result, process_display
 
 from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds
-from scripts.bio.clinical_config_builder import build_clinical_config
+from scripts.bio.clinical_config_validator import validate_thresholds
+from scripts.core.analysis import build_run_trids
 
 from scripts.ui.results_window import show_results_window
 from scripts.ui.igv import is_online, get_asset_path
@@ -88,52 +86,6 @@ def get_trids_with_clinical(window):
         for trid_id, trid in run.trids.items()
         if getattr(trid, "clinical", None) is not None
     }
-
-
-# ---------------------------------------------------------
-# Label priority
-# ---------------------------------------------------------
-def ask_priority(declared_label, menu_text):
-    layout = [
-        [sg.Text(
-            f"Le label clinique '{declared_label}' n'existe pas dans label_priority.\n\n"
-            f"{menu_text}\n"
-            f"Où souhaitez-vous insérer '{declared_label}' ?\n"
-            f"Entrez une priorité (entier) :\n"
-            f"- Si vous entrez 2 → le label sera inséré à la position 2\n"
-            f"- Les priorités >= 2 seront décalées automatiquement\n\n"
-            f"(Correction TEMPORAIRE, le YAML n'est pas modifié.)"
-        )],
-        [sg.Input(key='-PRIO-', focus=True)],
-        [sg.Button("Valider", bind_return_key=True)]  
-    ]
-
-    win = sg.Window(
-        "Insertion d'un label clinique",
-        layout,
-        modal=True,
-        keep_on_top=True,
-        disable_close=True
-    )
-
-    while True:
-        event, values = win.read()
-
-        if event == "Valider":
-            user_choice = values['-PRIO-'].strip()
-
-            if user_choice == "":
-                sg.popup_error("Vous devez entrer une priorité numérique.", keep_on_top=True)
-                continue
-
-            try:
-                insert_pos = int(user_choice)
-                win.close()
-                return insert_pos
-            except ValueError:
-                sg.popup_error("La priorité doit être un entier.", keep_on_top=True)
-                continue
-
 
 
 # ---------------------------------------------------------
@@ -383,111 +335,51 @@ def run_main_window():
             # Stocker la liste complète
             window.metadata["all_samples"] = display
 
-            # Détection TRIDs globaux
-            trids, trid_to_gene, diseases, static_info = autodetect_trids(zip_path)
-
+            # ---------------------------------------------------------
+            # Configuration clinique : validation avant tout usage
+            # ---------------------------------------------------------
             thresholds_data = load_clinical_thresholds()
-            label_priority = thresholds_data.get("label_priority", {})
+            errors, warnings = validate_thresholds(thresholds_data)
 
-            low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
+            for w in warnings:
+                logging.warning(f"clinical_thresholds.yaml: {w}")
 
-            if not label_priority:
+            if errors:
+                for e in errors:
+                    logging.error(f"clinical_thresholds.yaml: {e}")
                 sg.popup_error(
-                    "Configuration clinique incomplète",
-                    "La section 'label_priority' doit être définie dans clinical_thresholds.yaml."
+                    "clinical_thresholds.yaml est invalide ; le run n'est pas chargé.\n\n"
+                    + "\n".join(f" - {e}" for e in errors),
+                    title="Configuration clinique invalide",
+                    keep_on_top=True,
                 )
-                return
+                window["-SAMPLE-"].update(values=[], value="")
+                window.metadata["all_samples"] = []
+                continue
 
-            # ---------------------------------------------------------
-            # Protection : détecter les doublons de priorité
-            # ---------------------------------------------------------
-            prio_to_labels = {}
-            for lbl, prio in label_priority.items():
-                prio_to_labels.setdefault(prio, []).append(lbl)
+            if warnings and not window.metadata.get("yaml_warnings_shown"):
+                window.metadata["yaml_warnings_shown"] = True
+                sg.popup_scrolled(
+                    "Avertissements de configuration (clinical_thresholds.yaml).\n"
+                    "Les valeurs concernées seront classées 'unclassified'.\n\n"
+                    + "\n".join(f" - {w}" for w in warnings),
+                    title="Configuration clinique",
+                    size=(100, 20),
+                )
 
-            duplicates = {prio: labs for prio, labs in prio_to_labels.items() if len(labs) > 1}
-
-            if duplicates:
-                msg = "Le fichier clinical_thresholds.yaml contient des priorités dupliquées :\n\n"
-                for prio, labs in duplicates.items():
-                    msg += f"Priorité {prio} : {', '.join(labs)}\n"
-
-                msg += "\nChaque label doit avoir une priorité unique.\nCorrigez le YAML puis relancez l'analyse."
-
-                sg.popup_error(msg, keep_on_top=True)
-                return
-
-            
-            logging.info(f"Initializing {len(trids)} genomic loci structures...")
+            label_priority = thresholds_data["label_priority"]
+            low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
 
             # ---------------------------------------------------------
             # Création des TRIDs globaux + remplissage infos immuables + clinique
             # ---------------------------------------------------------
-            for trid_id in trids:
-                t = TRID(trid_id)
+            trids, diseases, run.trids = build_run_trids(zip_path, thresholds_data)
+            logging.info(f"Initialized {len(trids)} genomic loci structures.")
 
-                # --- Infos TRGT immuables ---
-                if trid_id in static_info:
-                    info = static_info[trid_id]
-                    t.chrom = info["chrom"]
-                    t.start = info["start"]
-                    t.end = info["end"]
-                    t.motifs = info["motifs"]
-
-                # --- Bloc YAML du TRID (sous-bloc) ---
-                trid_yaml_block = thresholds_data.get(trid_id)
-                logging.debug(f"YAML block found for {trid_id}: {trid_yaml_block is not None}")
-
-                if trid_yaml_block:
-                    t.clinical = build_clinical_config(trid_id, thresholds_data)
-
-                    # --- Protection : labels déclarés dans les groupes cliniques ---
-                    if t.clinical:
-                        for group_id, group in t.clinical.groups.items():
-
-                            declared_labels = list(group.thresholds.keys())
-                            for rule in group.structure_rules:
-                                declared_labels.append(rule["conditions"]["classification"])
-
-                            for declared_label in declared_labels:
-
-                                if declared_label not in label_priority:
-
-                                    priorities_sorted = sorted(label_priority.items(), key=lambda x: x[1])
-
-                                    menu_text = "Priorités existantes :\n\n"
-                                    for lbl, prio in priorities_sorted:
-                                        menu_text += f"  {prio} : {lbl}\n"
-
-                                    # --- Popup SANS Cancel ---
-                                    insert_pos = ask_priority(declared_label, menu_text)
-
-                                    # --- Recalcul automatique ---
-                                    new_priority_map = {}
-                                    for lbl, prio in priorities_sorted:
-                                        new_priority_map[lbl] = prio + 1 if prio >= insert_pos else prio
-
-                                    new_priority_map[declared_label] = insert_pos
-
-                                    label_priority = dict(sorted(new_priority_map.items(), key=lambda x: x[1]))
-
-                                    logging.warning(
-                                        f"Clinical label '{declared_label}' inserted at priority {insert_pos}. "
-                                        f"Priority table successfully updated."
-                                    )
-
-                    # --- Orientation RC ---
-                    if t.clinical.orientation.lower() == "rc":
-                        t.motifs_rc = [reverse_complement(m) for m in t.motifs]
-
-
-                run.trids[trid_id] = t
-
-                # --- DEBUG ---
+            for trid_id, t in run.trids.items():
                 logging.debug(f"Locus: {trid_id} | Chrom: {t.chrom} | Coords: {t.start}-{t.end} | Motifs: {t.motifs}")
                 if t.clinical:
                     logging.debug(f"  Clinical Config: Mode={t.clinical.classification_mode} | Groups={list(t.clinical.groups.keys())}")
-
 
             logging.info("Successfully initialized all genomic loci structures.")
 

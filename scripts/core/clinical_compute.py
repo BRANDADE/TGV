@@ -1,3 +1,6 @@
+from scripts.bio.labels import is_low_label
+
+
 def build_genotype_clinical(clinical, genotype_display, pure_only, min_label):
 
     # Sécurisation : si genotype_display est vide → fallback
@@ -9,7 +12,9 @@ def build_genotype_clinical(clinical, genotype_display, pure_only, min_label):
     count_with = clinical.total_main_count_with if clinical.total_main_count_with is not None else count_without
     count_repeats = count_with
 
-    clinical_is_min = (clinical.clinical == min_label)
+    # 'unclassified' est traité comme le label minimal : on compare alors avec les
+    # autres motifs (sinon RFC1 afficherait « 0 (AAGGG) » au lieu de « 11 (AAAAG) »)
+    clinical_is_min = is_low_label(clinical.clinical, min_label)
 
     # ============================================================
     # CAS 1 : pure_only (notation enrichie)

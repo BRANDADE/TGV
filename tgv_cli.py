@@ -18,6 +18,7 @@ from scripts.core.orchestrator import process_clinical, process_result, process_
 
 from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds
 from scripts.bio.clinical_config_builder import build_clinical_config
+from scripts.bio.clinical_config_validator import validate_thresholds
 
 # Minimal logging configuration for console output
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -252,13 +253,16 @@ def export_run(zip_path, trgt_version, bed_version, run_id, out_tsv, all_loci=Fa
     # Autodetect loci and extract static metadata
     trids, _, _, static_info = autodetect_trids(zip_path)
 
-    # Load clinical thresholds configuration
+    # Load and validate clinical thresholds configuration
     thresholds_data = load_clinical_thresholds()
-    label_priority = thresholds_data.get("label_priority", {})
-    low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
+    errors, warnings = validate_thresholds(thresholds_data)
+    for w in warnings:
+        logging.warning(f"clinical_thresholds.yaml: {w}")
+    if errors:
+        raise ValueError("Invalid clinical_thresholds.yaml: " + " | ".join(errors))
 
-    if not label_priority:
-        raise ValueError("The 'label_priority' section is required in clinical_thresholds.yaml.")
+    label_priority = thresholds_data["label_priority"]
+    low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
 
     # Configure TRID data structures
     for trid_id in trids:

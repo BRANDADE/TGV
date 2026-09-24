@@ -12,6 +12,14 @@ def status_token(allele):
     return None
 
 
+def missing_genotype(allele):
+    """Génotype affiché quand aucun groupe clinique n'a été résolu (ou allèle non appelé)."""
+    token = status_token(allele)
+    if token is None and allele.clinical_label and allele.clinical is None:
+        return "."  # appelé mais discordance motifs : génotype clinique non calculable
+    return token
+
+
 def fill_raw_base(result, trid_id, trid, a1, a2):
     """
     Remplit les champs RAW de Result à partir des données TRGT.
@@ -55,8 +63,9 @@ def fill_raw_base(result, trid_id, trid, a1, a2):
     result.seg1_raw = a1.sequence.segmentation_complete
     result.inter1_raw = format_interruptions(a1.sequence.interruptions)
 
-    result.classification1_raw = a1.clinical.clinical if a1.clinical else status_token(a1)
-    result.genotype1_raw = status_token(a1)
+    result.classification1_raw = a1.clinical_label or status_token(a1)
+    result.classification1_note = a1.clinical_note
+    result.genotype1_raw = missing_genotype(a1)
 
     # ---------------------------------------------------------
     # --- Allèle 2 ---
@@ -76,8 +85,9 @@ def fill_raw_base(result, trid_id, trid, a1, a2):
     result.seg2_raw = a2.sequence.segmentation_complete
     result.inter2_raw = format_interruptions(a2.sequence.interruptions)
 
-    result.classification2_raw = a2.clinical.clinical if a2.clinical else status_token(a2)
-    result.genotype2_raw = status_token(a2)
+    result.classification2_raw = a2.clinical_label or status_token(a2)
+    result.classification2_note = a2.clinical_note
+    result.genotype2_raw = missing_genotype(a2)
 
 
 
