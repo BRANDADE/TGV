@@ -3,8 +3,6 @@ from scripts.models.trgt_group import TRGTGroupData
 from scripts.core.sequence_utils import parse_motif_counts, parse_segmentation
 from scripts.core.motif_utils import extract_group_motifs, compute_interruption_bp, compute_m
 
-from scripts.bio.clinical_thresholds_loader import get_repeat_mode, get_motif_groups
-
 
 
 def decompose_repetition_without_interruptions(repetitions, groups):

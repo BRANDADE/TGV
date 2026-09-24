@@ -81,7 +81,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
             if h in ("Commentaires", comments_label):
                 # Seul le libellé fixe est traduit : les notes sont des données copiées vers le SIL
                 comment_val = "; ".join(tr(c) if c == LOW_COVERAGE else c for c in comments)
-                row_html += f"<td><span contenteditable='true' class='comment-input' data-placeholder=\"{tr('Ajouter un commentaire...')}\">{comment_val}</span></td>"
+                row_html += f"<td><span contenteditable='true' class='comment-input' data-placeholder=\"{tr('Ajouter un commentaire...')}\">{html.escape(comment_val)}</span></td>"
             else:
                 val = r_dict.get(h, '')
                 classes = []
@@ -91,7 +91,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
                     classes.append("modified-cell")
                 
                 class_attr = f" class='{' '.join(classes)}'" if classes else ""
-                row_html += f"<td{class_attr}>{tr(str(val))}</td>"
+                row_html += f"<td{class_attr}>{html.escape(str(val))}</td>"
 
         row_html += "</tr>"
         tbody_rows.append(row_html)

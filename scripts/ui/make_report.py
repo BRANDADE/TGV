@@ -4,7 +4,6 @@ make_report.py  Unified and clean HTML report for PacBio TRGT & TGV QC
 Command-line usage:
     python make_report.py <run_folder_or_zip_archive>
 """
-import os
 import argparse
 import base64
 import json
@@ -202,8 +201,8 @@ def df_to_html_table(table_data: dict, table_id: str) -> str:
     return (
         f'<table id="{table_id}">\n'
         f'<thead><tr>{headers}</tr></thead>\n'
-        f'<tbody>\n' + "\n".join(rows) + '\n</tbody>\n'
-        f'</table>'
+        '<tbody>\n' + "\n".join(rows) + '\n</tbody>\n'
+        '</table>'
     )
 
 
@@ -251,13 +250,6 @@ def generate_report_html_string(input_path: Path) -> str:
         + "\n"
     )
     metrics_tsv_json = json.dumps(metrics_tsv)
-
-    comment = data.get("_comment") or ""
-    pbcommand_version = "?"
-    if "version" in comment:
-        parts = comment.split("version")
-        if len(parts) > 1:
-            pbcommand_version = parts[1].strip().split()[0] or "?"
 
     interp_data = {}
     interp_file = reader.find_file_by_suffix("qc_interpretation.json")

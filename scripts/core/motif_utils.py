@@ -52,8 +52,12 @@ def compute_interruption_bp(segmentation, motif_group):
 
 def compute_m(interruption_bp, motif_len):
     """
-    Calcule m = nombre de motifs compensés.
+    Calcule m = nombre de motifs compensés : interruption_bp / motif_len arrondi
+    à l'entier le plus proche, les demis vers le haut (3 pb / motif de 6 → 1).
+
+    round() de Python arrondit les demis au pair (round(2.5) == 2, round(3.5) == 4) :
+    le résultat dépendait de la parité, d'où l'arithmétique entière explicite.
     """
     if motif_len <= 0:
         return 0
-    return round(interruption_bp / motif_len)
+    return (2 * interruption_bp + motif_len) // (2 * motif_len)

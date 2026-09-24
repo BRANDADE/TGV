@@ -1,7 +1,5 @@
 import logging
 
-from scripts.models.trid import TRID
-from scripts.models.sample import Sample
 from scripts.models.result import Result
 from scripts.models.display import DisplayRow, DisplayDetails, DisplayExport, DisplayHtml
 
@@ -9,7 +7,6 @@ from scripts.models.display import DisplayRow, DisplayDetails, DisplayExport, Di
 from scripts.core.result_builder import fill_raw_base, fill_clinical_base
 from scripts.core.clinical_compute import genotype_value
 from scripts.core.marking import mark_pathogenic_motifs, mark_pathogenic_segments, mark_pathogenic_repetition, mark_pathogenic_genotype
-from scripts.core.rows import build_row_simple, build_row_clinical
 
 from scripts.bio.motif_structure import decompose_repetition_without_interruptions, decompose_repetition_with_interruptions
 from scripts.bio.clinical_classifier import clinical_group
@@ -109,47 +106,6 @@ def process_result(analysis_input):
         sample.result = result
 
     return None
-
-
-def process_rows(analysis_input):
-    """
-    Construit les lignes simples TRGT pour l'UI à partir du DTO.
-    """
-    rows = []
-    label_priority = analysis_input.label_priority
-    min_label = min(label_priority, key=label_priority.get)
-
-    # iter_items() retourne (trid_id, TRID_global, Sample)
-    for trid_id, trid_global, sample in analysis_input.iter_items():
-        
-        a1 = sample.allele1
-        a2 = sample.allele2
-
-        clinical_cfg = trid_global.clinical
-        if clinical_cfg is None:
-            row = build_row_simple(
-                trid_id=trid_id,
-                trid=trid_global,
-                a1=a1,
-                a2=a2,
-                paths=analysis_input.paths,
-                sample_name=analysis_input.sample_name,
-            )
-
-        else:
-           row = build_row_clinical(
-                trid_id=trid_id,
-                trid=trid_global,
-                a1=a1,
-                a2=a2,
-                paths=analysis_input.paths,
-                sample_name=analysis_input.sample_name,
-                min_label=min_label
-            )
-
-        rows.append(row)
-
-    return rows
 
 
 def process_clinical(analysis_input):

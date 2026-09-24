@@ -39,6 +39,16 @@ def get_val(obj, attr_name, default="N/A"):
     return str(val)
 
 
+def as_percent(value):
+    """Fraction TRGT (AP, AM) → pourcentage affiché ; valeur inchangée si non numérique."""
+    if value == "N/A":
+        return value
+    try:
+        return f"{int(float(value) * 100)}%"
+    except ValueError:
+        return value
+
+
 def reset_igv_dir():
     """Nouveau répertoire IGV dans la session ; les fichiers IGV précédents ne sont plus servis."""
     server = get_server()
@@ -106,10 +116,10 @@ def open_igv(genome_fasta_path=None,
     if row and isinstance(row, dict):
         r_obj = row.get("Result_obj")
         if r_obj:
-            if not chrom: chrom = getattr(r_obj, "chrom", None)
-            if not start: start = getattr(r_obj, "start", None)
-            if not end: end = getattr(r_obj, "end", None)
-            if not sample_name: 
+            chrom = chrom or getattr(r_obj, "chrom", None)
+            start = start or getattr(r_obj, "start", None)
+            end = end or getattr(r_obj, "end", None)
+            if not sample_name:
                 sample_name = getattr(r_obj, "sample_id", None) or getattr(r_obj, "sample_name", None)
 
     if chrom is None or start is None or end is None:
@@ -272,25 +282,10 @@ def open_igv(genome_fasta_path=None,
             depth1 = get_val(r_obj, "depth1_raw")
             depth2 = get_val(r_obj, "depth2_raw")
             
-            meth1 = get_val(r_obj, "methylation1")
-            if meth1 != "N/A":
-                try: meth1_pct = f"{int(float(meth1) * 100)}%"
-                except ValueError: meth1_pct = meth1
-                
-            meth2 = get_val(r_obj, "methylation2")
-            if meth2 != "N/A":
-                try: meth2_pct = f"{int(float(meth2) * 100)}%"
-                except ValueError: meth2_pct = meth2
-                
-            pur1 = get_val(r_obj, "purity1")
-            if pur1 != "N/A":
-                try: purity1_pct = f"{int(float(pur1) * 100)}%"
-                except ValueError: purity1_pct = pur1
-                
-            pur2 = get_val(r_obj, "purity2")
-            if pur2 != "N/A":
-                try: purity2_pct = f"{int(float(pur2) * 100)}%"
-                except ValueError: purity2_pct = pur2
+            meth1_pct = as_percent(get_val(r_obj, "methylation1"))
+            meth2_pct = as_percent(get_val(r_obj, "methylation2"))
+            purity1_pct = as_percent(get_val(r_obj, "purity1"))
+            purity2_pct = as_percent(get_val(r_obj, "purity2"))
             
             if class1 in (None, "", "None", "Non classé", "Non classifié"):
                 class1 = get_val(r_obj, "classification1_bio") or get_val(r_obj, "classification1_raw") or tr("Non classifié")

@@ -2,7 +2,7 @@
 import sys
 import os
 import logging
-import scripts.core.i18n
+import scripts.core.i18n  # noqa: F401  (traductions et bouton de langue appliqués à PySimpleGUI)
 
 # Importation du configurateur de logs
 from scripts.core.logger import setup_logging
@@ -74,7 +74,7 @@ def main():
         logging.info("Launching main graphical user interface...")
         run_main_window()
         logging.info("Application closed normally.")
-    except Exception as e:
+    except Exception:
         # Enregistrement du crash complet dans l'unique fichier de log de l'application
         logging.critical("A critical error occurred during execution:", exc_info=True)
         sys.exit(1)

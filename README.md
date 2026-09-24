@@ -19,13 +19,13 @@
 
 ### 📋 Caractéristiques principales
 
-* **Interface graphique (GUI) intuitive** :  Chargement des données, filtrage par patient ou locus (TRID), et édition dynamique des seuils cliniques ou génotypes.
+* **Interface graphique (GUI) intuitive** :  Chargement des données, filtrage par patient ou locus (TRID), et surcharge manuelle tracée des classifications et génotypes (les seuils cliniques se modifient dans `clinical_thresholds.yaml`).
 * **Cochage automatique par panel** : Intègre un système de boutons configurables permettant de sélectionner automatiquement en un clic des listes de gènes d'intérêt (panels in silico) définies par l'utilisateur.
 * **Visualisation d'alignements (igv.js)** :  Extraction automatique des bams (spanning_BAM / repeat_reads) et ouverture d'une session IGV locale dans votre navigateur pour une inspection immédiate.
 * **Affichage de graphiques TRGT (SVG)** : Rendu direct des profils d'allèles et de méthylation générés par l'outil TRVZ (TRGT), sans extraction manuelle.
 * **Rapport de contrôle qualité global (QC)** : Rapport HTML généré à la volée pour visualiser la qualité d'enrichissement du run. Note : QC produit via le module tgv_inputs_builder.py.
 * **Traçabilité par fichier de logs** : Chaque analyse génère un journal structuré et horodaté dans logs/ (versions, entrées, étapes du pipeline et alertes).
-* **Zéro empreinte disque** : Création de fichiers temporaires uniquement. Un nettoyage automatique est garanti à la fermeture de l'application.
+* **Fichiers temporaires confinés** : Les fichiers extraits (BAM pour IGV, graphiques, exports HTML, rapport QC) sont écrits dans un répertoire temporaire propre à la session (`tgv_*`), supprimé à la fermeture de l'application. Ils ne sont servis au navigateur que par un serveur local restreint (127.0.0.1, jeton aléatoire, liste blanche de fichiers).
 * **Léger et portable** : Développé sans dépendances lourdes (pas de Pandas, NumPy ou Jinja2). Disponible en exécutable autonome (Windows) ou script léger (Linux/macOS).
 
 ---
@@ -36,21 +36,43 @@ L'outil **TGV** s'adapte à votre environnement via deux modes d'exécution :
 
 #### Option A : Sous Windows (Exécutable autonome)
 Destiné aux cliniciens et biologistes sur poste de travail Windows.
-1. Téléchargez l'exécutable autonome **`TGV.exe`** depuis l'onglet *Releases* de ce dépôt GitHub.
-2. Double-cliquez sur l'exécutable pour lancer l'application. 
+1. Récupérez l'exécutable autonome **`TGV.exe`** produit par le workflow GitHub Actions *Build Windows EXE* (onglet *Actions*, artefact `TGV-exe`). Aucune release n'est publiée à ce jour.
+2. Double-cliquez sur l'exécutable pour lancer l'application.
 *Aucune installation de Python ou de bibliothèque n'est requise.*
 
 #### Option B : Sous Linux / macOS (Ligne de commande)
 Destiné aux bio-informaticiens ou pour une utilisation sur serveur de calcul.
 
-1. Installez les deux dépendances requises :
+1. Installez les dépendances (versions épinglées) :
    ```bash
-   pip install PySimpleGUI-4-foss pyyaml
+   pip install -r requirements.txt            # interface graphique et CLI
+   pip install -r requirements-builder.txt    # tgv_inputs_builder.py (json5, matplotlib)
    ```
 2. Lancez l'application :
    ```bash
    python main.py
    ```
+
+#### Option C : Ligne de commande (CLI, intégration cron / Slurm)
+```bash
+python tgv_cli.py --zip RUN-trgt_vcfs.zip --out export.tsv            # panel « Ataxie »
+python tgv_cli.py --zip RUN-trgt_vcfs.zip --out export.tsv --all-loci # tous les loci
+```
+* La CLI ne nécessite ni tkinter ni affichage graphique.
+* **Codes retour** : `0` succès ; `1` au moins un échantillon en échec (les autres sont écrits) ou aucune ligne produite ; `2` configuration ou entrée invalide (rien n'est écrit).
+* **Relance idempotente** : les lignes existantes d'un même couple (`run_id`, `sample_id`) sont remplacées ; `run_id` vaut par défaut le préfixe du ZIP.
+* **Provenance** : chaque ligne porte la version de TRGT et le catalogue (lus dans l'en-tête du VCF), la version et le commit de TGV, l'empreinte SHA-256 de `clinical_thresholds.yaml` et la référence des seuils (`source`).
+
+#### Reproduire l'analyse avec le catalogue public de TRGT
+```bash
+trgt genotype --genome GRCh38.fa --repeats pathogenic_repeats.hg38.bed \
+    --reads S1.bam --output-prefix S1.trgt --preset targeted --karyotype XY
+bcftools sort -Oz -o S1.trgt.sorted.vcf.gz S1.trgt.vcf.gz
+gunzip -c S1.trgt.sorted.vcf.gz > S1.trgt.sorted.vcf
+zip RUN-trgt_vcfs.zip S1.trgt.sorted.vcf
+python tgv_cli.py --zip RUN-trgt_vcfs.zip --out export.tsv --all-loci
+```
+Le catalogue public ([`pathogenic_repeats.hg38.bed`](https://github.com/PacificBiosciences/trgt/blob/main/repeats/pathogenic_repeats.hg38.bed)) utilise des identifiants de gènes (`ATXN1`, `TBP`…) : `configs/trid_aliases.yaml` les relie aux blocs de `clinical_thresholds.yaml`. Des jeux de données PacBio publics sont disponibles, par exemple sur [pacb.com/vega-targeted-datasets](https://www.pacb.com/vega-targeted-datasets/).
 
 ---
 
@@ -73,7 +95,7 @@ TGV détecte automatiquement les archives associées présentes dans le même r�
   * `{ID_RUN}-trgt_meth_allele.zip` : Archives de méthylation allèle-spécifique de tous les patients.
   * `{ID_RUN}-trgt_meth_waterfall.zip` : Archives de profils de reads *waterfall* de méthylation de tous les patients.
 
-*Fonctionnement interne : Lors de la sélection d'un patient et d'un locus, TGV ouvre l'archive globale du run correspondante en mémoire, y recherche le fichier spécifique du patient (par exemple `nom_patient.sorted.spanning.bam`), l'extrait de manière temporaire pour l'analyse, puis nettoie le disque à la fermeture.*
+*Fonctionnement interne : Lors de la sélection d'un patient et d'un locus, TGV ouvre l'archive globale du run correspondante, y recherche le fichier du patient **par correspondance exacte** sur les conventions de `tgv_inputs_builder.py` (`{patient}.trgt.spanning.sorted.bam`, `{patient}.repeat_reads.bam`, `{patient}_{catégorie}.trvz_alleles.zip`), l'extrait dans le répertoire temporaire de la session, puis le supprime à la fermeture. Si plusieurs fichiers correspondent, aucun n'est ouvert. Le nom réel du fichier est affiché dans IGV.*
 
 #### 3. Rapport de Contrôle Qualité (Module exclusif TGV)
 Ce rapport, qui n'est pas généré nativement par SMRT Link/TRGT, est **produit spécifiquement par votre script tgv_inputs_builder.py** à partir des données brutes du run. Il permet une supervision globale que le workflow standard ne propose pas.
@@ -87,10 +109,17 @@ L'archive **{id}-QC.zip** (générée par le builder) contient :
 
 ### ⚙️ Configuration & Personnalisation
 
-TGV est hautement configurable pour s'adapter aux besoins spécifiques de votre laboratoire de diagnostic grâce à deux fichiers de configuration au format YAML situés dans le répertoire **`configs/`** :
+TGV est configurable grâce aux fichiers du répertoire **`configs/`** :
 
-* **`clinical_thresholds.yaml`** (`configs/`) : Fichier de référence clinique. Il définit, pour chaque maladie/locus (TRID), les plages de tailles de répétitions permettant de classer les allèles (Sain, Prémutation, Pathogène) ainsi que l'orientation du brin (Directe ou Reverse-Complement).
-* **`buttons_panel.yaml`** (`configs/`) : Permet de personnaliser dynamiquement les boutons de l'interface graphique. Vous pouvez y définir des panels (ex: "Ataxies", "Myopathies") et lister les TRIDs associés pour les cocher automatiquement d'un seul clic à l'écran.
+* **`clinical_thresholds.yaml`** : Fichier de référence clinique. Il définit, pour chaque maladie/locus (TRID), les plages de répétitions permettant de classer les allèles ainsi que l'orientation du brin (directe ou reverse-complement). Il est **validé au chargement** : une erreur (label absent de `label_priority`, borne invalide, orientation manquante…) bloque l'analyse ; les trous et chevauchements de plages sont signalés.
+* **`buttons_panel.yaml`** : Panels de loci sélectionnables en un clic (ex : « Ataxie »), également utilisés par la CLI.
+* **`trid_aliases.yaml`** : Correspondance entre les identifiants d'un autre catalogue TRGT (ex : catalogue public) et les blocs de `clinical_thresholds.yaml`.
+* **`trgt_params.json5`** : Paramètres de `trgt genotype` et `trgt plot` utilisés par `tgv_inputs_builder.py` (obligatoire : sans lui, le builder s'arrête plutôt que de lancer TRGT avec le preset par défaut `wgs`).
+
+#### Statuts particuliers
+* **`unclassified`** : allèle appelé mais non classable (valeur hors de toute plage du YAML, plages qui se chevauchent, ou motifs TRGT absents des groupes cliniques). TGV ne le classe jamais « normal » par défaut ; le locus reste dans l'export avec l'explication en commentaire.
+* **`no_call`** : allèle non appelé par TRGT ; **`-`** : second allèle absent d'un locus haploïde (ex. chrX, caryotype XY).
+* Les deux allèles sont affichés dans l'ordre croissant du génotype clinique (allèle 1 = plus petit).
 
 ---
 
@@ -98,12 +127,32 @@ TGV est hautement configurable pour s'adapter aux besoins spécifiques de votre 
 
 Pour assurer une traçabilité complète de vos analyses, **TGV** génère automatiquement des journaux horodatés dans le sous-dossier `logs/` :
 
-*   **Pour l'analyse clinique (TGV GUI/CLI)** :
-    `TGV_run_ANNEEMOISJOUR_HEUREMINUTESECONDE.log` (ex: `TGV_run_20260612_145002.log`)
+*   **Pour l'interface graphique** :
+    `tgv.ANNEEMOISJOURHEUREMINUTESECONDE.log` (ex: `tgv.20260612145002.log`)
 *   **Pour la préparation des données (Builder)** :
-    `tgv_input_builder.ANNEEMOISJOUR_HEUREMINUTESECONDE.log` (ex: `tgv_input_builder.20260922135222.log`)
+    `tgv_input_builder.ANNEEMOISJOURHEUREMINUTESECONDE.log` (ex: `tgv_input_builder.20260922135222.log`)
+*   **Pour la CLI** : journal sur la sortie console (à rediriger par l'ordonnanceur).
 
-Ces fichiers permettent un audit précis des versions utilisées, des fichiers sources et des éventuels avertissements rencontrés durant le traitement.
+Ces fichiers contiennent la version et le commit de TGV, l'empreinte SHA-256 de `clinical_thresholds.yaml`, les avertissements de configuration et le journal d'audit des surcharges manuelles (utilisateur, patient, run, valeur automatique d'origine).
+
+---
+
+### ⚠️ Limites connues
+
+* Les règles cliniques suivantes restent à arbitrer par les biologistes et ne sont pas modifiées par le code : SCA1 (toute interruption rend un allèle de 39–44 unités « normal », GeneReviews ne retient que les interruptions CAT), FGF14 (expansions GAA non pures), FXN (`protective_motifs` non utilisé), écarts de seuils avec GeneReviews.
+* La règle de profondeur (seuil par allèle) pénalise les homozygotes, dont les lectures sont réparties entre deux allèles identiques.
+* `clinical_thresholds.yaml` comporte des trous (RFC1 < 200, SCA7 20–27, SCA36 15–649…) et un chevauchement (FMR1 = 200) : les valeurs concernées sont classées `unclassified`.
+* PySimpleGUI-4-foss est un miroir figé de PySimpleGUI 4, sans mises à jour.
+
+---
+
+### 🧪 Tests
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+pytest
+```
+Les tests (VCF synthétiques au format TRGT 5.x) couvrent le parsing, la classification, la CLI, le serveur local et le builder ; ils tournent sans interface graphique et sont exécutés par la CI (`.github/workflows/tests.yaml`).
 
 </details>
 
@@ -126,15 +175,15 @@ Ces fichiers permettent un audit précis des versions utilisées, des fichiers s
 
 ### 📋 Main Features
 
-* **Intuitive GUI**: Easily load data, filter patients or loci (TRIDs), and adjust clinical thresholds or genotypes.
+* **Intuitive GUI**: Easily load data, filter patients or loci (TRIDs), and apply traced manual overrides of classifications and genotypes (clinical thresholds are edited in `clinical_thresholds.yaml`).
 * **Automation Modules**: 
     * **`tgv_inputs_builder.py`**: Automates archive structuring and QC report generation.
     * **`tgv_cli.py`**: Command-line interface for batch processing and pipeline integration.
-* **Alignment Visualization (igv.js)**: Automated BAM extraction with an embedded HTTP server (Range Requests) for smooth inspection.
+* **Alignment Visualization (igv.js)**: Automated BAM extraction, served by a restricted local HTTP server (127.0.0.1, random token, file whitelist, Range requests).
 * **TRGT Graphics Display (SVG)**: Direct rendering of allele/methylation plots (TRVZ tool) with no manual extraction.
 * **Global Run QC**: On-the-fly HTML quality report (generated via `tgv_inputs_builder.py`).
 * **Traceability & Logs**: Structured, timestamped logs for both the GUI and the Builder in `logs/`.
-* **Zero Disk Footprint**: Automated cleanup of temporary files upon exit.
+* **Confined temporary files**: One temporary directory per session (`tgv_*`), removed on exit.
 * **Lightweight & Portable**: No heavy dependencies (no Pandas/NumPy). Portable executable (Windows) or simple script (Linux/macOS).
 
 ---
@@ -145,13 +194,14 @@ Ces fichiers permettent un audit précis des versions utilisées, des fichiers s
 
 #### Option A: Windows (Standalone executable)
 Aimed at clinicians and biologists on Windows workstations.
-1. Download the standalone **`TGV.exe`** from the *Releases* tab.
+1. Get the standalone **`TGV.exe`** from the *Build Windows EXE* GitHub Actions workflow (artifact `TGV-exe`); no release has been published yet.
 2. Double-click to launch.
 
 #### Option B: Linux / macOS (Command-line usage)
 Aimed at bioinformaticians or server environment usage.
-1. Install dependencies: `pip install PySimpleGUI-4-foss pyyaml`
+1. Install pinned dependencies: `pip install -r requirements.txt` (and `requirements-builder.txt` for the builder)
 2. GUI Mode: `python main.py` | CLI Mode: `python tgv_cli.py --help`
+3. CLI exit codes: `0` success, `1` sample failure or no rows, `2` invalid configuration/input. Re-running replaces the rows of the same (`run_id`, `sample_id`). Each row carries TRGT version and catalog (VCF header), TGV version/commit and the SHA-256 of `clinical_thresholds.yaml`.
 
 ---
 
@@ -166,16 +216,23 @@ Aimed at bioinformaticians or server environment usage.
 
 ### ⚙️ Configuration & Customization
 
-* **`clinical_thresholds.yaml`**: Defines clinical size ranges and motif strand orientation.
+* **`clinical_thresholds.yaml`**: Defines clinical repeat ranges and motif strand orientation; validated on load (errors block the analysis, gaps/overlaps are reported and yield `unclassified`).
 * **`buttons_panel.yaml`**: Allows customizing the GUI with dynamic buttons for specific gene panels (e.g., "Ataxias").
+* **`trid_aliases.yaml`**: Maps TRIDs of other TRGT catalogs (e.g., the public catalog) to `clinical_thresholds.yaml` blocks.
+* **`trgt_params.json5`**: TRGT parameters used by `tgv_inputs_builder.py` (required).
+
+Allele statuses: `unclassified` (called but not classifiable — never defaulted to "normal"), `no_call` (not called by TRGT), `-` (absent second allele at a haploid locus). Alleles are ordered by increasing clinical genotype.
 
 ---
 
 ### 🛠️ Logs Directory Organization
 
 For full auditability, **TGV** generates timestamped logs in the `logs/` subdirectory:
-*   **Clinical Analysis (GUI/CLI)**: `TGV_run_YYYYMMDD_HHMMSS.log`
-*   **Data Preparation (Builder)**: `tgv_input_builder.YYYYMMDD_HHMMSS.log`
+*   **GUI**: `tgv.YYYYMMDDHHMMSS.log`
+*   **Data Preparation (Builder)**: `tgv_input_builder.YYYYMMDDHHMMSS.log`
+*   **CLI**: console output.
+
+Known limitations (clinical rules for SCA1/FGF14/FXN, depth rule for homozygotes, gaps in `clinical_thresholds.yaml`, frozen PySimpleGUI-4-foss) are listed in the French section. Tests: `pip install -r requirements-dev.txt && ruff check . && pytest`.
 
 </details>
 
@@ -212,8 +269,6 @@ If you use **TGV** for clinical work or scientific publications, please acknowle
   <br>
 
 * **Auteur principal / Main Author** : Corentin Marco (CHU de Nîmes)
-* **Licence / License** : Ce projet est sous licence libre **Creative Commons Attribution - Pas d'Utilisation Commerciale 4.0 International** (CC BY-NC 4.0).
-
-Pour plus de détails, veuillez vous référer aux termes de la licence Creative Commons en ligne. / For more details, please refer to the Creative Commons license terms online.
+* **Licence / License** : [MIT](LICENSE).
 
 </details>
