@@ -21,8 +21,9 @@ class Result:
         self.end = None
         self.position = None
 
-        # Le locus possède une configuration clinique (bloc YAML)
+        # Le locus possède une configuration clinique (bloc YAML) et sa référence
         self.has_clinical = False
+        self.thresholds_source = ""
 
         # Motifs
         self.motifs_raw = None

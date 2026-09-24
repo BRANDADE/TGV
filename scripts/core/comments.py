@@ -39,10 +39,34 @@ def classification_notes(result):
     return notes
 
 
+def _pair(v1, v2):
+    return f"{'None' if v1 in (None, '') else v1} / {'None' if v2 in (None, '') else v2}"
+
+
+def override_notes(result):
+    """
+    Traces des surcharges manuelles (interface) : valeur automatique d'origine.
+    Copiées vers le SIL avec la ligne, sans changer le format des colonnes.
+    """
+    notes = []
+    if result.classification1_bio or result.classification2_bio:
+        auto = _pair(result.classification1_raw, result.classification2_raw)
+        applied = _pair(result.classification1_bio, result.classification2_bio)
+        if applied != auto:
+            notes.append(f"Classification modifiée manuellement (auto : {auto})")
+    if result.genotype1_bio is not None or result.genotype2_bio is not None:
+        auto = _pair(result.genotype1_raw, result.genotype2_raw)
+        applied = _pair(result.genotype1_bio, result.genotype2_bio)
+        if applied != auto:
+            notes.append(f"Génotype modifié manuellement (auto : {auto})")
+    return notes
+
+
 def result_comments(result, low_depth_threshold=None):
     """Liste des commentaires automatiques d'un résultat."""
     comments = []
     if is_low_coverage(result, low_depth_threshold):
         comments.append(LOW_COVERAGE)
     comments.extend(classification_notes(result))
+    comments.extend(override_notes(result))
     return comments

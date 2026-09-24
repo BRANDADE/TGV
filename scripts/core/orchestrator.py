@@ -95,6 +95,7 @@ def process_result(analysis_input):
         # 1) RAW TRGT
         fill_raw_base(result, trid_id, trid_global, a1, a2)
         result.has_clinical = trid_global.clinical is not None
+        result.thresholds_source = trid_global.clinical.source if trid_global.clinical else ""
 
         # 2) Clinique si applicable
         if trid_global.clinical:

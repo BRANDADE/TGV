@@ -1,5 +1,6 @@
 import PySimpleGUI as sg
 import os
+import getpass
 import re
 import logging
 
@@ -95,7 +96,13 @@ def build_genotype_panel():
     ], relief=sg.RELIEF_SUNKEN, pad=(5,5))
 
 
-def show_results_window(sample_name, results, label_priority, paths, online_status, low_depth_threshold, run_id=""):
+def show_results_window(sample_name, results, label_priority, paths, online_status, low_depth_threshold, run_id="", provenance=None):
+    user = getpass.getuser()
+
+    def audit(message):
+        # Journal d'audit : qui, quel patient, quel run
+        logging.info(f"Audit Trail [user={user} | patient={sample_name} | run={run_id}]: {message}")
+
     sorted_labels = sorted(label_priority.keys(), key=lambda k: label_priority[k])
     sorted_labels = ["None"] + sorted_labels
 
@@ -435,7 +442,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             r.classification2_bio = new_a2
 
             new_final = f"{new_a1} / {new_a2}"
-            logging.info(f"Audit Trail: Manual classification override for locus '{r.trid}' set to: {new_final}")
+            audit(f"Manual classification override for locus '{r.trid}' set to: {new_final} (auto: {row['Classification_auto']})")
 
             r.display_row.classification = new_final
             row["Classification"] = new_final
@@ -466,7 +473,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             r.classification2_bio = None
 
             row["Classification"] = auto
-            logging.info(f"Audit Trail: Reset classification for locus '{r.trid}' to auto-detected default: {auto}")
+            audit(f"Reset classification for locus '{r.trid}' to auto-detected default: {auto}")
             r.display_row.classification = auto
 
             table_data[idx][5] = auto
@@ -532,6 +539,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                 sample_name,
                 run_id=run_id,
                 low_depth_threshold=low_depth_threshold,
+                provenance=provenance,
             )
             save_and_open_html(html, name=f"tgv_export_{sample_name}")
 
@@ -593,7 +601,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
 
             r.genotype1_bio = g1_bio
             r.genotype2_bio = g2_bio
-            logging.info(f"Audit Trail: Manual genotype override for locus '{r.trid}' set to: {g1_val} / {g2_val} (Auto-detected was: {raw1_str} / {raw2_str})")
+            audit(f"Manual genotype override for locus '{r.trid}' set to: {g1_val} / {g2_val} (auto: {raw1_str} / {raw2_str})")
 
             # Formatage pour l'affichage final
             display_g1 = str(g1_bio) if g1_bio is not None else "None"
@@ -629,6 +637,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             r.genotype2_bio = None
 
             auto_gt = row["Genotype_auto"]
+            audit(f"Reset genotype for locus '{r.trid}' to auto-detected default: {auto_gt}")
             row["Génotype"] = auto_gt
             r.display_row.genotype = auto_gt
 

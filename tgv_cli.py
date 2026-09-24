@@ -14,6 +14,7 @@ from scripts.core.artifact_lookup import sample_id_from_vcf_name
 from scripts.core.config_manager import get_safe_config_path
 from scripts.core.analysis import build_run_trids, resolve_panel, run_analysis
 from scripts.core.comments import LOW_COVERAGE, result_comments
+from scripts.core.provenance import read_run_manifest, read_vcf_header, tgv_provenance
 
 from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds, load_trid_aliases
 from scripts.bio.clinical_config_validator import validate_thresholds
@@ -44,7 +45,14 @@ CANONICAL_HEADERS = [
     "Depth",
     "Genotype",
     "Classification",
-    "Comments"
+    "Comments",
+    # Provenance (E2) : de quoi reproduire chaque ligne
+    "catalog",
+    "thresholds_source",
+    "karyotype",
+    "tgv_version",
+    "tgv_commit",
+    "thresholds_sha256",
 ]
 
 # Clé d'une ligne : relancer l'export d'un run remplace ses lignes au lieu de les dupliquer
@@ -203,15 +211,17 @@ def write_output_file(out_path, rows):
 # ---------------------------------------------------------------------------
 # One exported row per locus (raw values, no UI decoration)
 # ---------------------------------------------------------------------------
-def build_row(result, run_id, sample_id, trgt_version, bed_version, low_depth_threshold):
+def build_row(result, run_id, sample_id, low_depth_threshold, provenance):
+    """
+    provenance : trgt_version, bed_version (optionnel), catalog, karyotype,
+                 tgv_version, tgv_commit, thresholds_sha256.
+    """
     de = result.display_export
     comments = ["Low coverage" if c == LOW_COVERAGE else c for c in result_comments(result, low_depth_threshold)]
 
-    row = {}
-    if trgt_version is not None:
-        row["trgt_version"] = trgt_version
-    if bed_version is not None:
-        row["bed_version"] = bed_version
+    row = {"trgt_version": provenance.get("trgt_version", "")}
+    if provenance.get("bed_version") is not None:
+        row["bed_version"] = provenance["bed_version"]
     row.update({
         "run_id": run_id,
         "sample_id": sample_id,
@@ -220,8 +230,36 @@ def build_row(result, run_id, sample_id, trgt_version, bed_version, low_depth_th
         "Genotype": de.genotype,
         "Classification": de.classification,
         "Comments": "; ".join(comments),
+        "catalog": provenance.get("catalog", ""),
+        "thresholds_source": result.thresholds_source,
+        "karyotype": provenance.get("karyotype", ""),
+        "tgv_version": provenance.get("tgv_version", ""),
+        "tgv_commit": provenance.get("tgv_commit", ""),
+        "thresholds_sha256": provenance.get("thresholds_sha256", ""),
     })
     return row
+
+
+def sample_provenance(zip_path, vcf_filename, sample_id, trgt_version_arg, bed_version, base, manifest):
+    """
+    Provenance d'un échantillon. La version de TRGT est lue dans l'en-tête du VCF
+    (##trgtVersion) ; une valeur --trgt-version différente est une erreur.
+    """
+    header = read_vcf_header(zip_path, vcf_filename)
+    trgt_version = header["trgt_version"]
+    if trgt_version_arg and trgt_version and trgt_version_arg != trgt_version:
+        raise ValueError(
+            f"--trgt-version {trgt_version_arg} differs from the VCF header (##trgtVersion={trgt_version})"
+        )
+
+    provenance = dict(base)
+    provenance.update({
+        "trgt_version": trgt_version or (trgt_version_arg or ""),
+        "bed_version": bed_version,
+        "catalog": header["catalog"],
+        "karyotype": ((manifest.get("samples") or {}).get(sample_id) or {}).get("karyotype", ""),
+    })
+    return provenance
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +294,13 @@ def export_run(zip_path, trgt_version, bed_version, run_id, all_loci=False):
     run_id = run_id or get_analysis_prefix(zip_path)
     trids, _, run_trids = build_run_trids(zip_path, thresholds_data, load_trid_aliases())
 
+    base_provenance = tgv_provenance()
+    manifest = read_run_manifest(zip_path)
+    logging.info(
+        f"TGV {base_provenance['tgv_version']} (commit {base_provenance['tgv_commit']}) | "
+        f"clinical_thresholds.yaml SHA-256 {base_provenance['thresholds_sha256']}"
+    )
+
     # Set up selected loci list depending on the choice of panel vs. all loci
     if all_loci:
         logging.info("Global export mode active: all detected loci will be processed.")
@@ -276,6 +321,9 @@ def export_run(zip_path, trgt_version, bed_version, run_id, all_loci=False):
         logging.info(f"Analyzing patient: {sample_id}")
 
         try:
+            provenance = sample_provenance(
+                zip_path, vcf_filename, sample_id, trgt_version, bed_version, base_provenance, manifest,
+            )
             sample_trids = parse_vcf_for_sample(zip_path=zip_path, vcf_filename=vcf_filename, global_trids=run_trids)
             results, discordances, missing = run_analysis(
                 vcf_filename, sample_trids, run_trids, requested, label_priority, low_depth_threshold,
@@ -293,7 +341,7 @@ def export_run(zip_path, trgt_version, bed_version, run_id, all_loci=False):
             logging.warning(f"No targeted loci identified for sample {sample_id}")
 
         for result in results:
-            rows.append(build_row(result, run_id, sample_id, trgt_version, bed_version, low_depth_threshold))
+            rows.append(build_row(result, run_id, sample_id, low_depth_threshold, provenance))
 
     return rows, failures
 
@@ -304,7 +352,7 @@ def export_run(zip_path, trgt_version, bed_version, run_id, all_loci=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Structured export for TRGT run analysis (command-line utility).")
     parser.add_argument("--zip", required=True, help="Path to the trgt_vcfs.zip archive")
-    parser.add_argument("--trgt-version", default=None, help="TRGT version used")
+    parser.add_argument("--trgt-version", default=None, help="Expected TRGT version (checked against ##trgtVersion of each VCF)")
     parser.add_argument("--bed-version", default=None, help="Clinical BED file version used")
     parser.add_argument("--run-id", default=None, help="Unique identifier for the run (default: ZIP name prefix)")
     parser.add_argument("--out", default="tgv_export_ataxie.tsv", help="Output filename (must end in .csv, .tsv, or .xlsx)")

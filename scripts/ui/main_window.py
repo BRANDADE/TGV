@@ -16,6 +16,7 @@ from scripts.core.config_manager import get_safe_config_path
 from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds, load_trid_aliases
 from scripts.bio.clinical_config_validator import validate_thresholds
 from scripts.core.analysis import build_run_trids, resolve_panel, run_analysis
+from scripts.core.provenance import read_vcf_header, thresholds_sha256, tgv_provenance
 
 from scripts.ui.results_window import show_results_window
 from scripts.ui.igv import is_online, get_asset_path
@@ -374,6 +375,7 @@ def run_main_window():
 
             label_priority = thresholds_data["label_priority"]
             low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
+            logging.info(f"clinical_thresholds.yaml SHA-256: {thresholds_sha256()}")
 
             # ---------------------------------------------------------
             # Création des TRIDs globaux + remplissage infos immuables + clinique
@@ -659,6 +661,13 @@ def run_main_window():
 
             run_id = run.name if run else ""
 
+            # Provenance affichée dans l'export : TGV, TRGT (en-tête VCF), catalogue, YAML
+            provenance = tgv_provenance()
+            try:
+                provenance.update(read_vcf_header(run.vcf_zip, sample_name))
+            except Exception as e:
+                logging.warning(f"Cannot read TRGT header of '{sample_name}': {e}")
+
             show_results_window(
                 sample_name=sample_id_from_vcf_name(sample_name),
                 results=results,
@@ -666,7 +675,8 @@ def run_main_window():
                 paths=paths,
                 online_status=online_status,
                 low_depth_threshold=low_depth_threshold,
-                run_id=run_id
+                run_id=run_id,
+                provenance=provenance,
             )
 
     window.close()

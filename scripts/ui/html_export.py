@@ -1,4 +1,5 @@
 import os
+import html
 import webbrowser
 import logging
 from datetime import datetime
@@ -26,7 +27,20 @@ except ImportError:
     sg = None
 
 
-def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_threshold=None):
+def provenance_text(provenance):
+    """Ligne de provenance affichée en pied de page de l'export."""
+    p = provenance or {}
+    parts = [f"TGV {p.get('tgv_version', '?')} ({p.get('tgv_commit', '?')})"]
+    if p.get("trgt_version"):
+        parts.append(f"TRGT {p['trgt_version']}")
+    if p.get("catalog"):
+        parts.append(f"catalogue {p['catalog']}")
+    if p.get("thresholds_sha256"):
+        parts.append(f"clinical_thresholds.yaml SHA-256 {p['thresholds_sha256'][:16]}")
+    return " · ".join(parts)
+
+
+def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_threshold=None, provenance=None):
     logging.info(f"Generating export HTML table for patient '{sample_name}' with {len(rows)} selected rows.")
 
     headers = list(headers)
@@ -83,7 +97,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
         tbody_rows.append(row_html)
     tbody_html = "".join(tbody_rows)
 
-    html = f"""<!DOCTYPE html>
+    page = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -284,6 +298,11 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
     align-items: center;
     justify-content: space-between;
   }}
+  .provenance {{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }}
   .footer-dot {{
     width: 8px; height: 8px;
     border-radius: 50%;
@@ -338,6 +357,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
 
 <footer class="footer">
   <div><span class="footer-dot"></span><span>TRGT Global Viewer &bull; {sample_name}</span></div>
+  <div class="provenance">{html.escape(provenance_text(provenance))}</div>
 </footer>
 
 <script>
@@ -393,7 +413,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
 </body>
 </html>
 """
-    return html
+    return page
 
 
 def save_and_open_html(html_content, name="tgv_export"):
