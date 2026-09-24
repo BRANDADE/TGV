@@ -1,0 +1,5 @@
+# Dépendances d'exécution de TGV (interface graphique et CLI)
+# Installation : pip install -r requirements.txt
+PySimpleGUI-4-foss==4.60.4.1
+pyyaml==6.0.3
+openpyxl==3.1.5
