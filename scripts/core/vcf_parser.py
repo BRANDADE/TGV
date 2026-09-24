@@ -5,7 +5,7 @@ from scripts.models.sample import Sample
 from scripts.models.allele import Allele, AlleleSequence
 from scripts.bio.labels import CALLED, NO_CALL, ABSENT
 
-from scripts.core.sequence_utils import reverse_complement, rc_segmentation, convert_mc, convert_ms
+from scripts.core.sequence_utils import reverse_complement, reverse_complement_segmentation, convert_mc, convert_ms
 from scripts.core.segmentation_interruptions import find_interruptions, extract_interruption_sequences, segmentation_complete
 
 
@@ -88,21 +88,21 @@ def empty_allele(status):
     return allele
 
 
-def build_called_allele(cons, fields, i, motifs, orientation, motif_names=None):
+def build_called_allele(cons, fields, i, motif_names, orientation):
     """
     Construit un allèle appelé à partir de sa séquence et de ses champs FORMAT (position i).
 
-    motifs      : motifs du catalogue, orientés (servent à la segmentation RC) ;
-    motif_names : noms affichés/classés (cadre de lecture du YAML), même ordre.
+    motif_names : motifs orientés, dans l'ordre du catalogue, nommés dans le cadre de
+                  lecture du YAML (ex. GCA → CAG).
     """
-    motif_names = motif_names or motifs
     mc_raw = _value(fields["MC"], i)
     ms_raw = _value(fields["MS"], i)
 
-    # ORIENTATION RC → recalcul de la séquence et de la segmentation
+    # ORIENTATION RC → séquence ET segmentation de TRGT reverse-complémentées
+    # (la segmentation n'est jamais recalculée sur la séquence RC)
     if orientation == "rc":
         cons = reverse_complement(cons)
-        ms_raw = rc_segmentation(cons, ",".join(motifs))
+        ms_raw = reverse_complement_segmentation(ms_raw, len(cons))
 
     # Les comptes (MC) et les coordonnées (MS) restent ceux de TRGT ; seuls les noms
     # des motifs sont ramenés au cadre de lecture du YAML (ex. GCA → CAG).
@@ -189,7 +189,7 @@ def parse_vcf_for_sample(zip_path, vcf_filename, global_trids):
                 alleles = []
                 for i, index in enumerate(indices[:2]):
                     cons = allele_sequence(index, ref, alt_list)
-                    alleles.append(build_called_allele(cons, fields, i, motifs, orientation, motif_names))
+                    alleles.append(build_called_allele(cons, fields, i, motif_names, orientation))
 
                 # Complément à deux allèles : haploïde → absent ; sinon non appelé
                 while len(alleles) < 2:

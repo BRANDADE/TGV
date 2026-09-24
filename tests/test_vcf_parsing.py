@@ -76,3 +76,21 @@ def test_low_depth_marker_only_in_display(analyze):
     r = analyze([line])["SCA17_TBP"]
     assert r.display_row.depth == "⚠ 20 / 80"
     assert (r.display_export.depth1, r.display_export.depth2) == ("20", "80")
+
+
+def test_reverse_complement_segmentation():
+    from scripts.core.sequence_utils import reverse_complement_segmentation
+    # Brin + (18 pb) : CTG×3 | ATG | CTG×2  →  RC : CAG×2 | CAT | CAG×3
+    assert reverse_complement_segmentation("0(0-9)_0(12-18)", 18) == "0(0-6)_0(9-18)"
+    assert reverse_complement_segmentation("", 18) == ""
+
+
+def test_rc_locus_keeps_trgt_segmentation(analyze):
+    # MS fourni par TRGT (brin +) : il est reverse-complémenté, jamais recalculé
+    plus = rc("CAG" * 14 + "CAT" + "CAG" * 15)
+    line = record("SCA1_ATXN1", ["CTG", "TTG"], [Call(plus), Call(rc("CAG" * 42))])
+    ms_plus = line.split("\t")[9].split(":")[5].split(",")[0]
+    assert ms_plus == "0(0-45)_0(48-90)"
+    r = analyze([line])["SCA1_ATXN1"]
+    assert r.seg1_raw == "CAG(0-42)_CAT_CAG(45-90)"
+    assert r.inter1_raw == "CAT(1)"
