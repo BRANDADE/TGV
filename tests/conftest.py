@@ -1,11 +1,17 @@
 import os
+import sys
 
 import pytest
 import yaml
-from trgt_vcf import vcf_text, write_zip
 
-from scripts.core.analysis import build_run_trids, run_analysis
-from scripts.core.vcf_parser import parse_vcf_for_sample
+# Les tests n'importent jamais l'interface graphique : PySimpleGUI est rendu
+# inimportable (comportement identique avec ou sans tkinter / affichage).
+sys.modules.setdefault("PySimpleGUI", None)
+
+from trgt_vcf import vcf_text, write_zip  # noqa: E402
+
+from scripts.core.analysis import build_run_trids, run_analysis  # noqa: E402
+from scripts.core.vcf_parser import parse_vcf_for_sample  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
