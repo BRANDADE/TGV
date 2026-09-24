@@ -9,7 +9,7 @@
         //"karyotype": "XX",
 
         // Preset: "wgs" or "targeted"
-        // Default TRGT: "targeted"
+        // Default TRGT: "wgs" (src/cli.rs) — "targeted" est requis pour PureTarget
         "preset": "targeted",
 
         // Verbosity level
@@ -33,6 +33,11 @@
 
         // Output flanking sequence length
         //"output-flank-len": 50
+
+        // Minimum read quality (rq). OBLIGATOIRE si un BAM de fail reads est fourni
+        // (4e colonne de la liste d'échantillons) : --fail-reads désactive sinon le
+        // filtre de qualité par défaut de TRGT (TRGT >= 5.1.0, CHANGELOG).
+        //"min-read-quality": 0.98,
     },
 
     // ==========================================
