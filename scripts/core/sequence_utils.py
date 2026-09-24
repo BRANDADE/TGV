@@ -117,7 +117,11 @@ def parse_motif_counts(m: str):
 def parse_segmentation(seg: str):
     """
     Transforme 'CAG(2-5)_T_CAG(6-9)_CAT' en liste (motif, start, end).
+    Une segmentation vide (MS='.' dans le VCF) donne une liste vide.
     """
+    if not seg:
+        return []
+
     parts = seg.split("_")
     segments = []
     current_pos = None
@@ -196,3 +200,29 @@ def clean_and_sort_rep_string(rep_str):
 
     # reconstruction
     return "_".join(f"{motif}({count})" for motif, count in cleaned)
+
+
+def is_rotation(motif_a, motif_b):
+    """Vrai si motif_b est une permutation circulaire de motif_a (ex. GCA / CAG)."""
+    return len(motif_a) == len(motif_b) and motif_b in motif_a + motif_a
+
+
+def motif_frame_map(catalog_motifs, clinical_motifs):
+    """
+    Motifs du catalogue (déjà orientés) qui ne diffèrent d'un motif clinique (YAML)
+    que par le cadre de lecture : {motif catalogue: motif YAML}.
+
+    Ex. ATXN1 dans le catalogue public TRGT : TGC → RC 'GCA', rotation de 'CAG'.
+    Seules les correspondances uniques sont retenues, et jamais vers un motif
+    que le catalogue déclare déjà.
+    """
+    catalog = list(catalog_motifs)
+    clinical = set(clinical_motifs)
+    frame = {}
+    for motif in catalog:
+        if motif in clinical:
+            continue
+        candidates = [m for m in clinical if m != motif and m not in catalog and is_rotation(motif, m)]
+        if len(candidates) == 1:
+            frame[motif] = candidates[0]
+    return frame

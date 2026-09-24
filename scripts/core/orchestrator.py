@@ -1,17 +1,75 @@
 import logging
 
-from scripts.models.trid import TRID
-from scripts.models.sample import Sample
 from scripts.models.result import Result
 from scripts.models.display import DisplayRow, DisplayDetails, DisplayExport, DisplayHtml
 
 
 from scripts.core.result_builder import fill_raw_base, fill_clinical_base
+from scripts.core.clinical_compute import genotype_value
 from scripts.core.marking import mark_pathogenic_motifs, mark_pathogenic_segments, mark_pathogenic_repetition, mark_pathogenic_genotype
-from scripts.core.rows import build_row_simple, build_row_clinical
 
 from scripts.bio.motif_structure import decompose_repetition_without_interruptions, decompose_repetition_with_interruptions
 from scripts.bio.clinical_classifier import clinical_group
+from scripts.bio.labels import CALLED, NO_CALL, ABSENT, ABSENT_DISPLAY, UNCLASSIFIED, NOTE_MOTIF_DISCORDANCE, label_score
+
+# Allèles appelés d'abord, puis non appelés, puis absents (locus haploïde)
+_STATUS_RANK = {CALLED: 0, NO_CALL: 1, ABSENT: 2}
+
+
+def to_int(value):
+    """Entier ou None (valeur VCF manquante / vide)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def depth_display(raw, status, threshold):
+    """Profondeur affichée (avec ⚠ si sous le seuil) et profondeur brute exportée."""
+    if status == ABSENT:
+        return ABSENT_DISPLAY, ABSENT_DISPLAY
+    value = to_int(raw)
+    if value is None:
+        return ".", "."
+    shown = f"{value}"
+    if threshold is not None and value < threshold:
+        shown = f"\U000026A0 {value}"
+    return shown, f"{value}"
+
+
+def allele_sort_key(allele, clinical_cfg, min_label):
+    """
+    Clé de tri des allèles : (statut, génotype clinique affiché, AL).
+    Locus sans configuration clinique (ou allèle sans génotype clinique) : AL seul.
+    """
+    inf = float("inf")
+    clinical_value = inf
+    if clinical_cfg is not None and allele.clinical is not None:
+        clinical_value, _ = genotype_value(
+            allele.clinical, clinical_cfg.genotype_display, clinical_cfg.pure_only, min_label
+        )
+    size = to_int(allele.size)
+    return (_STATUS_RANK.get(allele.status, 3), clinical_value, size if size is not None else inf)
+
+
+def order_alleles(sample, clinical_cfg, min_label):
+    """
+    Ordonne les allèles d'un sample : allèle 1 = plus petit génotype clinique affiché.
+    Tri stable : à égalité, l'ordre TRGT est conservé. Les objets Allele entiers
+    sont échangés (profondeur, pureté, méthylation et séquence suivent).
+    """
+    ordered = sorted(
+        [sample.allele1, sample.allele2],
+        key=lambda a: allele_sort_key(a, clinical_cfg, min_label),
+    )
+    sample.allele1, sample.allele2 = ordered
+
+
+def raw_display(raw, status):
+    """Valeur brute affichée pour un allèle ('-' si absent, '.' si manquante)."""
+    if status == ABSENT:
+        return ABSENT_DISPLAY
+    return raw if raw not in (None, "") else "."
 
 
 def process_result(analysis_input):
@@ -23,6 +81,8 @@ def process_result(analysis_input):
         if sample.result:
             continue
 
+        # Ordre d'affichage des allèles fixé une fois pour toutes (UI, exports, IGV)
+        order_alleles(sample, trid_global.clinical, min_label)
         a1 = sample.allele1
         a2 = sample.allele2
 
@@ -31,6 +91,8 @@ def process_result(analysis_input):
 
         # 1) RAW TRGT
         fill_raw_base(result, trid_id, trid_global, a1, a2)
+        result.has_clinical = trid_global.clinical is not None
+        result.thresholds_source = trid_global.clinical.source if trid_global.clinical else ""
 
         # 2) Clinique si applicable
         if trid_global.clinical:
@@ -46,57 +108,16 @@ def process_result(analysis_input):
     return None
 
 
-def process_rows(analysis_input):
-    """
-    Construit les lignes simples TRGT pour l'UI à partir du DTO.
-    """
-    rows = []
-    label_priority = analysis_input.label_priority
-    min_label = min(label_priority, key=label_priority.get)
-
-    # iter_items() retourne (trid_id, TRID_global, Sample)
-    for trid_id, trid_global, sample in analysis_input.iter_items():
-        
-        a1 = sample.allele1
-        a2 = sample.allele2
-
-        clinical_cfg = trid_global.clinical
-        if clinical_cfg is None:
-            row = build_row_simple(
-                trid_id=trid_id,
-                trid=trid_global,
-                a1=a1,
-                a2=a2,
-                paths=analysis_input.paths,
-                sample_name=analysis_input.sample_name,
-            )
-
-        else:
-           row = build_row_clinical(
-                trid_id=trid_id,
-                trid=trid_global,
-                a1=a1,
-                a2=a2,
-                paths=analysis_input.paths,
-                sample_name=analysis_input.sample_name,
-                min_label=min_label
-            )
-
-        rows.append(row)
-
-    return rows
-
-
 def process_clinical(analysis_input):
     """
     Affiche la décomposition TRGT pour chaque TRID sélectionné
     et pour chaque allèle du sample.
     Remplit allele.trgt_groups[group_id] avec un TRGTGroupData structuré.
-    """
-    import PySimpleGUI as sg
 
+    Retourne la liste triée des TRID en discordance BED ↔ clinique
+    (affichage à la charge de l'appelant : popup dans l'interface, log en CLI).
+    """
     label_priority = analysis_input.label_priority
-    max_score = max(label_priority.values())
 
     logging.info(f"Executing clinical guidelines evaluation for sample: '{analysis_input.sample_name}'")
 
@@ -105,7 +126,7 @@ def process_clinical(analysis_input):
 
     for trid_id, trid_global, sample in analysis_input.iter_items():
 
-        if sample.allele1.clinical:
+        if sample.clinical_done:
             logging.debug(f"Clinical classification already computed for locus '{trid_id}'. Skipping recalculation.")
             continue
 
@@ -119,8 +140,14 @@ def process_clinical(analysis_input):
         motif_groups = clinical_cfg.groups
 
         alleles = [sample.allele1, sample.allele2]
+        sample.clinical_done = True
 
         for idx, allele in enumerate(alleles, start=1):
+
+            # Allèle non appelé (no-call) ou absent (locus haploïde) : rien à classer
+            if not allele.is_called:
+                logging.debug(f"Allele {idx} of locus '{trid_id}' is '{allele.status}'. No classification.")
+                continue
 
             logging.debug(f"Processing allele {idx} for locus '{trid_id}':")
             logging.debug(f"  Repetitions: {allele.sequence.repetitions}")
@@ -128,6 +155,9 @@ def process_clinical(analysis_input):
             logging.debug(f"  Sequence preview: {allele.sequence.sequence[:50]}...")
 
             allele.trgt_groups = {}
+            allele.clinical = None
+            allele.clinical_label = None
+            allele.clinical_note = None
 
             best_group = None
             best_score = -1
@@ -153,16 +183,16 @@ def process_clinical(analysis_input):
                     allele.trgt_groups[group_id] = None
                     continue
 
-                # Classification clinique
-                clinical_label = clinical_group(
+                # Classification clinique (jamais de repli silencieux sur 'normal')
+                clinical_label, clinical_note = clinical_group(
                     data_group=data,
                     clinical_group=group,
                     repeat_mode=repeat_mode,
                     classification_mode=classification_mode,
-                    label_priority=label_priority
                 )
 
                 data.clinical = clinical_label
+                data.clinical_note = clinical_note
 
                 # Debug
                 logging.debug(f"  Clinical group evaluation details - Group: {group_id} | Motifs: {group.motifs}")
@@ -171,7 +201,7 @@ def process_clinical(analysis_input):
                 allele.trgt_groups[group_id] = data
 
                 # Score clinique
-                score = label_priority.get(clinical_label)
+                score = label_score(clinical_label, label_priority)
                 
                 # Total repeats clinique
                 if data.total_main_count_with is not None:
@@ -193,28 +223,27 @@ def process_clinical(analysis_input):
                         best_group = group_id
                         best_repeats = total_repeats
 
-            # --- Aucun groupe valide trouvé ---
+            # --- Aucun groupe valide trouvé : allèle conservé, marqué non classable ---
             if best_group is None:
                 logging.error(f"No valid clinical threshold group resolved for allele {idx} of locus '{trid_id}'.")
-                allele.clinical = None
+                allele.clinical_label = UNCLASSIFIED
+                allele.clinical_note = NOTE_MOTIF_DISCORDANCE
                 discordances.append(trid_id)
                 continue
 
             # Stockage du groupe gagnant
             allele.clinical = allele.trgt_groups[best_group]
+            allele.clinical_label = allele.clinical.clinical
+            allele.clinical_note = allele.clinical.clinical_note
             allele.clinical_motifs = motif_groups[best_group].motifs
+            if allele.clinical_label == UNCLASSIFIED:
+                logging.warning(f"Allele {idx} of locus '{trid_id}' is unclassified: {allele.clinical_note}.")
 
-    # --- POPUP UNIQUE POUR TOUTES LES DISCORDANCES ---
+    discordances = sorted(set(discordances))
     if discordances:
-        logging.warning(f"Clinical/genomic discordances resolved for loci: {list(set(discordances))}")
-        message = (
-            "Discordance entre les motifs TRGT (BED) et les seuils cliniques définis dans "
-            "clinical_thresholds.yaml pour les locus suivants :\n\n"
-            + "\n".join(f" - {trid}" for trid in set(discordances))
-        )
-        sg.popup_error(message, title="Discordance clinique détectée")
+        logging.warning(f"Clinical/genomic discordances resolved for loci: {discordances}")
 
-    return None
+    return discordances
 
 
 def process_display(result, clinical_cfg, low_depth_threshold):
@@ -250,23 +279,21 @@ def process_display(result, clinical_cfg, low_depth_threshold):
     result.display_html.locus = result.locus
 
     # --- Profondeur ---
-    depth1 = int(result.depth1_raw)
-    depth2 = int(result.depth2_raw)
-    result.display_export.depth1 = f"{depth1}"
-    result.display_export.depth2 = f"{depth2}"
-    if valid_threshold is not None:
-        if (int(result.depth1_raw) < low_depth_threshold):
-            depth1 = f"\U000026A0 {depth1}"
-        if (int(result.depth2_raw) < low_depth_threshold):
-            depth2 = f"\U000026A0 {depth2}"
+    depth1, result.display_export.depth1 = depth_display(result.depth1_raw, result.status1, valid_threshold)
+    depth2, result.display_export.depth2 = depth_display(result.depth2_raw, result.status2, valid_threshold)
     result.display_row.depth = f"{depth1} / {depth2}"
     result.display_details.depth = f"{depth1} / {depth2}"
     result.display_html.depth = f"{depth1} / {depth2}"
 
     # --- Taille ---
-    size = f"{result.size1_raw} / {result.size2_raw}"
+    size1 = raw_display(result.size1_raw, result.status1)
+    size2 = raw_display(result.size2_raw, result.status2)
+    size = f"{size1} / {size2}"
     result.display_row.size = size
-    size_extended = f"{result.size1_raw} ({result.range_size1_raw}) / {result.size2_raw} ({result.range_size2_raw})"
+    size_extended = (
+        f"{size1} ({raw_display(result.range_size1_raw, result.status1)}) / "
+        f"{size2} ({raw_display(result.range_size2_raw, result.status2)})"
+    )
     result.display_details.size = size_extended
 
     # --- Motifs TRGT ---

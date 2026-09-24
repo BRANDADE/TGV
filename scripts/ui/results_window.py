@@ -1,16 +1,26 @@
 import PySimpleGUI as sg
 import os
+import getpass
 import re
-import shutil
-import tempfile
 import logging
 
 from scripts.core.config_manager import load_ui_settings, save_ui_settings
-from scripts.core.plots import open_svg, get_available_plots
+from scripts.core.plots import open_svg, forget_plots
+from scripts.core.artifact_lookup import (
+    AmbiguousArtifactError, find_plot, get_mapped_bam, get_spanning_bam,
+)
 from scripts.ui.results_table import build_results_table
 from scripts.ui.results_details import build_details_panel, update_details
 from scripts.ui.html_export import generate_html_table, save_and_open_html
-from scripts.ui.igv import open_igv, get_available_spanning_bam, get_available_bam
+from scripts.ui.igv import open_igv
+
+# Libellé affiché → catégorie des archives de graphiques (convention du builder)
+PLOT_CATEGORIES = [
+    ("Motifs allele", "motifs_allele"),
+    ("Motifs waterfall", "motifs_waterfall"),
+    ("Meth allele", "meth_allele"),
+    ("Meth waterfall", "meth_waterfall"),
+]
 
 
 def can_open_igv(r, paths, sample_name, online_status):
@@ -19,8 +29,12 @@ def can_open_igv(r, paths, sample_name, online_status):
     Affiche des informations de débogage dans la console en cas de problème.
     """
     # 1. Vérification des BAMs (Au moins un BAM requis)
-    span = get_available_spanning_bam(paths, sample_name)
-    mapped = get_available_bam(paths, sample_name)
+    try:
+        span = get_spanning_bam(paths, sample_name)
+        mapped = get_mapped_bam(paths, sample_name)
+    except AmbiguousArtifactError as e:
+        logging.error(f"IGV disabled for patient '{sample_name}': {e}")
+        return False
     
     logging.debug(f"IGV validation for locus: {r.chrom}:{r.start}-{r.end}")
     logging.debug(f"  - Spanning BAM found: {span is not None}")
@@ -82,7 +96,13 @@ def build_genotype_panel():
     ], relief=sg.RELIEF_SUNKEN, pad=(5,5))
 
 
-def show_results_window(sample_name, results, label_priority, paths, online_status, low_depth_threshold, run_id=""):
+def show_results_window(sample_name, results, label_priority, paths, online_status, low_depth_threshold, run_id="", provenance=None):
+    user = getpass.getuser()
+
+    def audit(message):
+        # Journal d'audit : qui, quel patient, quel run
+        logging.info(f"Audit Trail [user={user} | patient={sample_name} | run={run_id}]: {message}")
+
     sorted_labels = sorted(label_priority.keys(), key=lambda k: label_priority[k])
     sorted_labels = ["None"] + sorted_labels
 
@@ -295,10 +315,11 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                 logging.warning(f"Error saving UI geometry settings: {e}")
 
             # -----------------------------------------------------
-            # Cleanup des SVG temporaires
-            tmp_dir = os.path.join(tempfile.gettempdir(), ".tmp_plots", sample_name)
-            if os.path.isdir(tmp_dir):
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            # Cleanup des SVG temporaires du patient
+            try:
+                forget_plots(sample_name)
+            except Exception as e:
+                logging.debug(f"Plot cleanup skipped: {e}")
 
             window.close()
             return
@@ -353,25 +374,21 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             plot_entries = []
             plot_map.clear()
 
-            if paths.get("motifs_allele"):
-                for inner_zip, svg_file in get_available_plots(paths["motifs_allele"], sample_name, r.trid):
-                    plot_entries.append("Motifs allele")
-                    plot_map["Motifs allele"] = (inner_zip, svg_file)
-
-            if paths.get("motifs_waterfall"):
-                for inner_zip, svg_file in get_available_plots(paths["motifs_waterfall"], sample_name, r.trid):
-                    plot_entries.append("Motifs waterfall")
-                    plot_map["Motifs waterfall"] = (inner_zip, svg_file)
-
-            if paths.get("meth_allele"):
-                for inner_zip, svg_file in get_available_plots(paths["meth_allele"], sample_name, r.trid):
-                    plot_entries.append("Meth allele")
-                    plot_map["Meth allele"] = (inner_zip, svg_file)
-
-            if paths.get("meth_waterfall"):
-                for inner_zip, svg_file in get_available_plots(paths["meth_waterfall"], sample_name, r.trid):
-                    plot_entries.append("Meth waterfall")
-                    plot_map["Meth waterfall"] = (inner_zip, svg_file)
+            for plot_label, category in PLOT_CATEGORIES:
+                zip_path = paths.get(category)
+                if not zip_path or not os.path.isfile(zip_path):
+                    continue
+                try:
+                    found = find_plot(zip_path, sample_name, category, r.trid)
+                except AmbiguousArtifactError as e:
+                    logging.error(f"Plot '{plot_label}' disabled for patient '{sample_name}': {e}")
+                    continue
+                except Exception as e:
+                    logging.warning(f"Failed to read plots from archive '{zip_path}': {e}")
+                    continue
+                if found:
+                    plot_entries.append(plot_label)
+                    plot_map[plot_label] = (zip_path, *found)
 
             window["-PLOT-LIST-"].update(values=plot_entries)
             window["-PLOT-OPEN-"].update(disabled=not bool(plot_entries))
@@ -405,21 +422,10 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             if not label:
                 continue
 
-            inner_zip, svg_file = plot_map[label]
-
-            if label == "Motifs allele":
-                zip_path = paths["motifs_allele"]
-            elif label == "Motifs waterfall":
-                zip_path = paths["motifs_waterfall"]
-            elif label == "Meth allele":
-                zip_path = paths["meth_allele"]
-            elif label == "Meth waterfall":
-                zip_path = paths["meth_waterfall"]
-            else:
-                zip_path = None
-
-            if zip_path:
-                open_svg(zip_path, inner_zip, svg_file, sample_name)
+            if label not in plot_map:
+                continue
+            zip_path, inner_zip, svg_file = plot_map[label]
+            open_svg(zip_path, inner_zip, svg_file, sample_name)
 
         if ev == "-CL_VALIDATE-":
             if not vals["-TABLE-"]:
@@ -436,7 +442,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             r.classification2_bio = new_a2
 
             new_final = f"{new_a1} / {new_a2}"
-            logging.info(f"Audit Trail: Manual classification override for locus '{r.trid}' set to: {new_final}")
+            audit(f"Manual classification override for locus '{r.trid}' set to: {new_final} (auto: {row['Classification_auto']})")
 
             r.display_row.classification = new_final
             row["Classification"] = new_final
@@ -467,7 +473,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             r.classification2_bio = None
 
             row["Classification"] = auto
-            logging.info(f"Audit Trail: Reset classification for locus '{r.trid}' to auto-detected default: {auto}")
+            audit(f"Reset classification for locus '{r.trid}' to auto-detected default: {auto}")
             r.display_row.classification = auto
 
             table_data[idx][5] = auto
@@ -519,29 +525,23 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                 win.close()
 
         if ev == "-EXPORT-DATA-":
-            rows_export = []
-            for r in rows:
-                classif = r["Classification"]
-                if not classif:
-                    continue
-                parts = [x.strip() for x in classif.split("/")]
-                if len(parts) != 2:
-                    continue
-                a1, a2 = parts
-                if a1 != "None" or a2 != "None":
-                    rows_export.append(r)
+            # Seuls les loci sans configuration clinique sont exclus : un locus non classé
+            # ('unclassified', 'no_call') reste exporté avec son explication en commentaire.
+            rows_export = [r for r in rows if r["Result_obj"].has_clinical]
 
             if not rows_export:
-                sg.popup("Aucune ligne avec classification définie à exporter.")
+                sg.popup("Aucun locus avec configuration clinique à exporter.")
                 continue
 
             html = generate_html_table(
                 ["Locus", "Profondeur", "Génotype", "Classification"],
                 rows_export,
                 sample_name,
-                run_id=run_id 
+                run_id=run_id,
+                low_depth_threshold=low_depth_threshold,
+                provenance=provenance,
             )
-            save_and_open_html(html)
+            save_and_open_html(html, name=f"tgv_export_{sample_name}")
 
         if ev == "-GT_VALIDATE-":
             if not vals["-TABLE-"]:
@@ -601,7 +601,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
 
             r.genotype1_bio = g1_bio
             r.genotype2_bio = g2_bio
-            logging.info(f"Audit Trail: Manual genotype override for locus '{r.trid}' set to: {g1_val} / {g2_val} (Auto-detected was: {raw1_str} / {raw2_str})")
+            audit(f"Manual genotype override for locus '{r.trid}' set to: {g1_val} / {g2_val} (auto: {raw1_str} / {raw2_str})")
 
             # Formatage pour l'affichage final
             display_g1 = str(g1_bio) if g1_bio is not None else "None"
@@ -637,6 +637,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             r.genotype2_bio = None
 
             auto_gt = row["Genotype_auto"]
+            audit(f"Reset genotype for locus '{r.trid}' to auto-detected default: {auto_gt}")
             row["Génotype"] = auto_gt
             r.display_row.genotype = auto_gt
 
@@ -661,13 +662,19 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             row = rows[idx]
             r = row["Result_obj"]
 
-            span = get_available_spanning_bam(paths, sample_name)
+            try:
+                span = get_spanning_bam(paths, sample_name)
+                mapped = get_mapped_bam(paths, sample_name)
+            except AmbiguousArtifactError as e:
+                logging.error(f"IGV aborted for patient '{sample_name}': {e}")
+                sg.popup_error(f"Fichiers BAM ambigus pour le patient {sample_name} :\n{e}")
+                continue
+
             if span:
                 spanning_zip_path, spanning_bam_file, spanning_bai_file = span
             else:
                 spanning_zip_path = spanning_bam_file = spanning_bai_file = None
 
-            mapped = get_available_bam(paths, sample_name)
             if mapped:
                 mapped_zip_path, mapped_bam_file, mapped_bai_file = mapped
             else:

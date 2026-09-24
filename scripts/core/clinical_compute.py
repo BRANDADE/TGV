@@ -1,4 +1,13 @@
-def build_genotype_clinical(clinical, genotype_display, pure_only, min_label):
+from scripts.bio.labels import is_low_label
+
+
+def genotype_value(clinical, genotype_display, pure_only, min_label):
+    """
+    Génotype clinique d'un allèle : (valeur, texte affiché).
+
+    La valeur est le premier nombre affiché ; elle sert aussi à ordonner les
+    deux allèles (allèle 1 = plus petit génotype affiché).
+    """
 
     # Sécurisation : si genotype_display est vide → fallback
     if not genotype_display:
@@ -9,14 +18,16 @@ def build_genotype_clinical(clinical, genotype_display, pure_only, min_label):
     count_with = clinical.total_main_count_with if clinical.total_main_count_with is not None else count_without
     count_repeats = count_with
 
-    clinical_is_min = (clinical.clinical == min_label)
+    # 'unclassified' est traité comme le label minimal : on compare alors avec les
+    # autres motifs (sinon RFC1 afficherait « 0 (AAGGG) » au lieu de « 11 (AAAAG) »)
+    clinical_is_min = is_low_label(clinical.clinical, min_label)
 
     # ============================================================
     # CAS 1 : pure_only (notation enrichie)
     # ============================================================
     # pure_only s'applique TOUJOURS, sauf si full_with_others choisit un best_other
     if pure_only and genotype_display != "full_with_others":
-        return f"{count_without} ({count_with})"
+        return count_without, f"{count_without} ({count_with})"
 
     # ============================================================
     # CAS 2 : full_with_others
@@ -30,31 +41,30 @@ def build_genotype_clinical(clinical, genotype_display, pure_only, min_label):
 
             # Si best_other gagne → pure_only NE s'applique PAS
             if best_count > count_repeats:
-                return f"{best_count} ({best_motif})"
+                return best_count, f"{best_count} ({best_motif})"
 
         # Sinon winner reste le meilleur
-        return f"{count_repeats} ({clinical.main_motif})"
+        return count_repeats, f"{count_repeats} ({clinical.main_motif})"
 
     # ============================================================
     # CAS 3 : pathogenic_with_motif
     # ============================================================
     if genotype_display == "pathogenic_with_motif":
         if pure_only:
-            return f"{count_without} ({count_with})"
-        return f"{count_repeats} ({clinical.main_motif})"
+            return count_without, f"{count_without} ({count_with})"
+        return count_repeats, f"{count_repeats} ({clinical.main_motif})"
 
     # ============================================================
-    # CAS 4 : pathogenic_only
+    # CAS 4 : pathogenic_only (et fallback final)
     # ============================================================
-    if genotype_display == "pathogenic_only":
-        if pure_only:
-            return f"{count_without} ({count_with})"
-        return str(count_repeats)
+    if genotype_display == "pathogenic_only" and pure_only:
+        return count_without, f"{count_without} ({count_with})"
+    return count_repeats, str(count_repeats)
 
-    # ============================================================
-    # Fallback final
-    # ============================================================
-    return str(count_repeats)
+
+def build_genotype_clinical(clinical, genotype_display, pure_only, min_label):
+    """Texte du génotype clinique affiché (voir genotype_value)."""
+    return genotype_value(clinical, genotype_display, pure_only, min_label)[1]
 
 
 def build_repetition_clinical(clinical):

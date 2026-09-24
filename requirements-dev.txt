@@ -1,0 +1,6 @@
+# Dépendances de développement (tests et analyse statique)
+# Installation : pip install -r requirements-dev.txt
+-r requirements.txt
+-r requirements-builder.txt
+pytest==9.1.1
+ruff==0.16.8

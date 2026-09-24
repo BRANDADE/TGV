@@ -39,6 +39,7 @@ class TRGTGroupData:
 
         #Bloc clinique  
         self.clinical = clinical
+        self.clinical_note = None  # raison d'un 'unclassified'
 
     # ------------------------------------------------------------------
     # Représentation complète (affichée dans print ET dans repr)

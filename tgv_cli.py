@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 import os
+import sys
 import csv
 import argparse
 import logging
+import tempfile
 import yaml
-
-from scripts.models.run import Run
-from scripts.models.trid import TRID
-from scripts.models.dto import AnalysisInput
 
 from scripts.core.vcf_loader import list_vcfs
 from scripts.core.vcf_parser import parse_vcf_for_sample
-from scripts.core.trid_detector import autodetect_trids
-from scripts.core.sequence_utils import reverse_complement
+from scripts.core.utils import get_analysis_prefix
+from scripts.core.artifact_lookup import sample_id_from_vcf_name
 from scripts.core.config_manager import get_safe_config_path
-from scripts.core.orchestrator import process_clinical, process_result, process_display
+from scripts.core.analysis import build_run_trids, resolve_panel, run_analysis
+from scripts.core.comments import LOW_COVERAGE, result_comments
+from scripts.core.provenance import read_run_manifest, read_vcf_header, tgv_provenance
 
-from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds
-from scripts.bio.clinical_config_builder import build_clinical_config
+from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds, load_trid_aliases
+from scripts.bio.clinical_config_validator import validate_thresholds
 
 # Minimal logging configuration for console output
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -30,6 +30,11 @@ except ImportError:
     HAS_OPENPYXL = False
 
 
+# Codes retour (surveillés par cron / Slurm)
+EXIT_OK = 0
+EXIT_FAILURE = 1   # au moins un échantillon en échec, ou aucune ligne produite
+EXIT_CONFIG = 2    # configuration ou entrée invalide : rien n'est écrit
+
 # Ordre canonique de référence pour l'organisation des colonnes dans le fichier de sortie
 CANONICAL_HEADERS = [
     "trgt_version",
@@ -40,29 +45,22 @@ CANONICAL_HEADERS = [
     "Depth",
     "Genotype",
     "Classification",
-    "Comments"
+    "Comments",
+    # Provenance (E2) : de quoi reproduire chaque ligne
+    "catalog",
+    "thresholds_source",
+    "karyotype",
+    "tgv_version",
+    "tgv_commit",
+    "thresholds_sha256",
 ]
 
+# Clé d'une ligne : relancer l'export d'un run remplace ses lignes au lieu de les dupliquer
+ROW_KEY = ("run_id", "sample_id")
 
-# ---------------------------------------------------------------------------
-# Low Coverage Detection (based on warning symbol)
-# ---------------------------------------------------------------------------
-def check_low_coverage_flag(display_row):
-    """
-    Detects the presence of the warning symbol ⚠️ in formatted display row
-    fields to flag insufficient coverage.
-    """
-    fields_to_check = [
-        display_row.locus,
-        display_row.depth,
-        display_row.genotype,
-        display_row.classification
-    ]
-    for field in fields_to_check:
-        field_str = str(field)
-        if "⚠️" in field_str or "\u26a0" in field_str:
-            return True
-    return False
+
+class ConfigError(Exception):
+    """Configuration ou entrée invalide (code retour EXIT_CONFIG)."""
 
 
 # ---------------------------------------------------------------------------
@@ -72,16 +70,16 @@ def load_panel_ataxie():
     path = get_safe_config_path("buttons_panel.yaml")
 
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Configuration file 'buttons_panel.yaml' not found at: {path}")
+        raise ConfigError(f"Configuration file 'buttons_panel.yaml' not found at: {path}")
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except Exception as e:
-        raise RuntimeError(f"Error reading buttons_panel.yaml: {e}")
+        raise ConfigError(f"Error reading buttons_panel.yaml: {e}")
 
     if not isinstance(data, dict) or "Ataxie" not in data:
-        raise KeyError("The panel section 'Ataxie' is missing from buttons_panel.yaml.")
+        raise ConfigError("The panel section 'Ataxie' is missing from buttons_panel.yaml.")
 
     return data["Ataxie"]
 
@@ -97,57 +95,57 @@ def get_union_headers(existing_headers, new_headers):
     union_set = set(existing_headers).union(set(new_headers))
     ordered = [h for h in CANONICAL_HEADERS if h in union_set]
     # Ajout d'éventuelles colonnes inattendues non définies dans CANONICAL_HEADERS
-    for h in union_set:
+    for h in list(existing_headers) + list(new_headers):
         if h not in ordered:
             ordered.append(h)
     return ordered
+
+
+def merge_rows(existing_rows, new_rows):
+    """
+    Lignes existantes privées de celles des (run_id, sample_id) réexportés, puis nouvelles lignes.
+    """
+    new_keys = {tuple(str(r.get(k, "")) for k in ROW_KEY) for r in new_rows}
+    kept = [r for r in existing_rows if tuple(str(r.get(k, "") or "") for k in ROW_KEY) not in new_keys]
+    removed = len(existing_rows) - len(kept)
+    if removed:
+        logging.info(f"Replacing {removed} existing row(s) of the same run/sample(s) in the output file.")
+    return kept + list(new_rows)
+
+
+def _atomic_target(out_path):
+    """Fichier temporaire dans le même répertoire que la sortie (remplacement atomique)."""
+    directory = os.path.dirname(os.path.abspath(out_path))
+    fd, tmp_path = tempfile.mkstemp(prefix=".tgv_export_", dir=directory)
+    os.close(fd)
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
 # Flat Files Writers (CSV/TSV) with Header Re-alignment
 # ---------------------------------------------------------------------------
 def write_csv_tsv(out_path, rows, delimiter):
-    file_exists = os.path.exists(out_path) and os.path.getsize(out_path) > 0
-    new_headers = list(rows[0].keys())
+    existing_rows, existing_headers = [], []
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        with open(out_path, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter=delimiter)
+            existing_headers = reader.fieldnames or []
+            existing_rows = list(reader)
 
-    if not file_exists:
-        # Création d'un nouveau fichier avec uniquement les colonnes fournies
-        with open(out_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=new_headers, delimiter=delimiter)
+    headers = get_union_headers(existing_headers, list(rows[0].keys()))
+    all_rows = merge_rows(existing_rows, rows)
+
+    tmp_path = _atomic_target(out_path)
+    try:
+        with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=headers, delimiter=delimiter, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(rows)
-        return
-
-    # Lecture des en-têtes et données existantes
-    existing_rows = []
-    existing_headers = []
-    with open(out_path, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter=delimiter)
-        existing_headers = reader.fieldnames if reader.fieldnames else []
-        for r in reader:
-            existing_rows.append(r)
-
-    union_headers = get_union_headers(existing_headers, new_headers)
-
-    if union_headers == existing_headers:
-        # Les colonnes correspondent, nous pouvons simplement ajouter à la suite
-        with open(out_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=union_headers, delimiter=delimiter, extrasaction='ignore')
-            for row in rows:
-                formatted_row = {h: row.get(h, "") for h in union_headers}
-                writer.writerow(formatted_row)
-    else:
-        # Reconstitution globale du fichier suite à une modification de la structure des colonnes
-        all_rows = []
-        for r in existing_rows:
-            all_rows.append({h: r.get(h, "") for h in union_headers})
-        for r in rows:
-            all_rows.append({h: r.get(h, "") for h in union_headers})
-
-        with open(out_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=union_headers, delimiter=delimiter)
-            writer.writeheader()
-            writer.writerows(all_rows)
+            for r in all_rows:
+                writer.writerow({h: r.get(h, "") or "" for h in headers})
+        os.replace(tmp_path, out_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -160,62 +158,36 @@ def write_xlsx(out_path, rows):
             "Please install it using 'pip install openpyxl' or choose '.csv' / '.tsv' output instead."
         )
 
-    file_exists = os.path.exists(out_path) and os.path.getsize(out_path) > 0
-    new_headers = list(rows[0].keys())
+    existing_rows, existing_headers = [], []
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        ws = openpyxl.load_workbook(out_path).active
+        values = list(ws.iter_rows(values_only=True))
+        if values:
+            existing_headers = [h for h in values[0] if h is not None]
+            for line in values[1:]:
+                existing_rows.append({h: ("" if v is None else v) for h, v in zip(existing_headers, line)})
 
-    if not file_exists:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "TRGT Export"
-        ws.append(new_headers)
-        for row in rows:
-            ws.append([row.get(h, "") for h in new_headers])
-        wb.save(out_path)
-        return
+    headers = get_union_headers(existing_headers, list(rows[0].keys()))
+    all_rows = merge_rows(existing_rows, rows)
 
-    wb = openpyxl.load_workbook(out_path)
+    wb = openpyxl.Workbook()
     ws = wb.active
+    ws.title = "TRGT Export"
+    ws.append(headers)
+    for r in all_rows:
+        ws.append([r.get(h, "") for h in headers])
 
-    existing_headers = []
-    if ws.max_row >= 1:
-        existing_headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
-        existing_headers = [h for h in existing_headers if h is not None]
-
-    union_headers = get_union_headers(existing_headers, new_headers)
-
-    if union_headers == existing_headers:
-        # Ajout simple des nouvelles lignes dans les colonnes existantes
-        for row in rows:
-            ws.append([row.get(h, "") for h in union_headers])
-    else:
-        # Lecture des données existantes pour reconstruction
-        existing_rows = []
-        for r_idx in range(2, ws.max_row + 1):
-            row_val = {}
-            for c_idx, h in enumerate(existing_headers):
-                val = ws.cell(row=r_idx, column=c_idx + 1).value
-                row_val[h] = val if val is not None else ""
-            existing_rows.append(row_val)
-
-        # Nettoyage de la feuille de calcul
-        ws.delete_rows(1, ws.max_row)
-
-        # Réécriture de l'en-tête unifié
-        ws.append(union_headers)
-
-        # Réécriture des anciennes lignes alignées sur le nouvel en-tête
-        for r in existing_rows:
-            ws.append([r.get(h, "") for h in union_headers])
-
-        # Ajout des nouvelles lignes
-        for r in rows:
-            ws.append([r.get(h, "") for h in union_headers])
-
-    wb.save(out_path)
+    tmp_path = _atomic_target(out_path)
+    try:
+        wb.save(tmp_path)
+        os.replace(tmp_path, out_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Write Rows to Output File (Appends/Aggregates to TSV, CSV, or XLSX)
+# Write Rows to Output File (TSV, CSV, or XLSX)
 # ---------------------------------------------------------------------------
 def write_output_file(out_path, rows):
     if not rows:
@@ -237,174 +209,155 @@ def write_output_file(out_path, rows):
 
 
 # ---------------------------------------------------------------------------
+# One exported row per locus (raw values, no UI decoration)
+# ---------------------------------------------------------------------------
+def build_row(result, run_id, sample_id, low_depth_threshold, provenance):
+    """
+    provenance : trgt_version, bed_version (optionnel), catalog, karyotype,
+                 tgv_version, tgv_commit, thresholds_sha256.
+    """
+    de = result.display_export
+    comments = ["Low coverage" if c == LOW_COVERAGE else c for c in result_comments(result, low_depth_threshold)]
+
+    row = {"trgt_version": provenance.get("trgt_version", "")}
+    if provenance.get("bed_version") is not None:
+        row["bed_version"] = provenance["bed_version"]
+    row.update({
+        "run_id": run_id,
+        "sample_id": sample_id,
+        "Locus": de.locus,
+        "Depth": f"{de.depth1} / {de.depth2}",
+        "Genotype": de.genotype,
+        "Classification": de.classification,
+        "Comments": "; ".join(comments),
+        "catalog": provenance.get("catalog", ""),
+        "thresholds_source": result.thresholds_source,
+        "karyotype": provenance.get("karyotype", ""),
+        "tgv_version": provenance.get("tgv_version", ""),
+        "tgv_commit": provenance.get("tgv_commit", ""),
+        "thresholds_sha256": provenance.get("thresholds_sha256", ""),
+    })
+    return row
+
+
+def sample_provenance(zip_path, vcf_filename, sample_id, trgt_version_arg, bed_version, base, manifest):
+    """
+    Provenance d'un échantillon. La version de TRGT est lue dans l'en-tête du VCF
+    (##trgtVersion) ; une valeur --trgt-version différente est une erreur.
+    """
+    header = read_vcf_header(zip_path, vcf_filename)
+    trgt_version = header["trgt_version"]
+    if trgt_version_arg and trgt_version and trgt_version_arg != trgt_version:
+        raise ValueError(
+            f"--trgt-version {trgt_version_arg} differs from the VCF header (##trgtVersion={trgt_version})"
+        )
+
+    provenance = dict(base)
+    provenance.update({
+        "trgt_version": trgt_version or (trgt_version_arg or ""),
+        "bed_version": bed_version,
+        "catalog": header["catalog"],
+        "karyotype": ((manifest.get("samples") or {}).get(sample_id) or {}).get("karyotype", ""),
+    })
+    return provenance
+
+
+# ---------------------------------------------------------------------------
 # Export Pipeline for the Entire Run
 # ---------------------------------------------------------------------------
-def export_run(zip_path, trgt_version, bed_version, run_id, out_tsv, all_loci=False):
+def export_run(zip_path, trgt_version, bed_version, run_id, all_loci=False):
+    """
+    Analyse tous les patients du run.
+    Retourne (rows, failures) ; failures = [(sample_id, message)].
+    Lève ConfigError si la configuration ou l'archive est inutilisable.
+    """
     logging.info(f"Opening TRGT archive: {zip_path}")
+
+    if not os.path.isfile(zip_path):
+        raise ConfigError(f"ZIP archive not found: {zip_path}")
 
     vcfs = list_vcfs(zip_path)
     if not vcfs:
-        raise FileNotFoundError("The ZIP archive does not contain any .trgt.vcf files.")
+        raise ConfigError("The ZIP archive does not contain any .trgt.vcf files.")
 
-    run_name = os.path.basename(zip_path)
-    run = Run(name=run_name, vcf_zip=zip_path)
-
-    # Autodetect loci and extract static metadata
-    trids, _, _, static_info = autodetect_trids(zip_path)
-
-    # Load clinical thresholds configuration
+    # Load and validate clinical thresholds configuration
     thresholds_data = load_clinical_thresholds()
-    label_priority = thresholds_data.get("label_priority", {})
+    errors, warnings = validate_thresholds(thresholds_data)
+    for w in warnings:
+        logging.warning(f"clinical_thresholds.yaml: {w}")
+    if errors:
+        raise ConfigError("Invalid clinical_thresholds.yaml: " + " | ".join(errors))
+
+    label_priority = thresholds_data["label_priority"]
     low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
 
-    if not label_priority:
-        raise ValueError("The 'label_priority' section is required in clinical_thresholds.yaml.")
+    run_id = run_id or get_analysis_prefix(zip_path)
+    trids, _, run_trids = build_run_trids(zip_path, thresholds_data, load_trid_aliases())
 
-    # Configure TRID data structures
-    for trid_id in trids:
-        t = TRID(trid_id)
-
-        if trid_id in static_info:
-            info = static_info[trid_id]
-            t.chrom = info["chrom"]
-            t.start = info["start"]
-            t.end = info["end"]
-            t.motifs = info["motifs"]
-
-        trid_yaml_block = thresholds_data.get(trid_id)
-        if trid_yaml_block:
-            t.clinical = build_clinical_config(trid_id, thresholds_data)
-
-            if t.clinical and t.clinical.orientation.lower() == "rc":
-                t.motifs_rc = [reverse_complement(m) for m in t.motifs]
-
-        run.trids[trid_id] = t
+    base_provenance = tgv_provenance()
+    manifest = read_run_manifest(zip_path)
+    logging.info(
+        f"TGV {base_provenance['tgv_version']} (commit {base_provenance['tgv_commit']}) | "
+        f"clinical_thresholds.yaml SHA-256 {base_provenance['thresholds_sha256']}"
+    )
 
     # Set up selected loci list depending on the choice of panel vs. all loci
-    if not all_loci:
-        panel_ataxie = load_panel_ataxie()
-        logging.info(f"Ataxia clinical panel loaded ({len(panel_ataxie)} target loci identified).")
-    else:
+    if all_loci:
         logging.info("Global export mode active: all detected loci will be processed.")
+        requested = list(trids)
+    else:
+        panel_ataxie = load_panel_ataxie()
+        requested, absent = resolve_panel(panel_ataxie, run_trids)
+        logging.info(f"Ataxia clinical panel loaded ({len(panel_ataxie)} target loci, {len(requested)} in catalog).")
+        if absent:
+            logging.warning(f"Panel loci absent from the TRGT catalog: {absent}")
 
     rows = []
+    failures = []
 
     # Sequential processing per sample (patient)
     for vcf_filename in vcfs:
-        sample_name = os.path.basename(vcf_filename)
-        logging.info(f"Analyzing patient: {sample_name}")
+        sample_id = sample_id_from_vcf_name(vcf_filename)
+        logging.info(f"Analyzing patient: {sample_id}")
 
-        # Reset sample associations to avoid data collision across iterations
-        for trid_id in run.trids:
-            run.trids[trid_id].samples = {}
-
-        # Parse the VCF file
-        sample_trids = parse_vcf_for_sample(
-            zip_path=zip_path,
-            vcf_filename=vcf_filename,
-            global_trids=run.trids,
-        )
-
-        # Map parsed sample objects back to run TRIDs
-        for trid_id, sample_obj in sample_trids.items():
-            if trid_id in run.trids:
-                run.trids[trid_id].samples[vcf_filename] = sample_obj
-
-        # Filter and select loci based on the requested output mode
-        trids_present = set(sample_trids.keys())
-        if all_loci:
-            selected_trids = [t for t in trids if t in trids_present]
-        else:
-            selected_trids = [t for t in panel_ataxie if t in trids_present]
-
-        if not selected_trids:
-            logging.warning(f"No targeted loci identified for sample {sample_name}")
+        try:
+            provenance = sample_provenance(
+                zip_path, vcf_filename, sample_id, trgt_version, bed_version, base_provenance, manifest,
+            )
+            sample_trids = parse_vcf_for_sample(zip_path=zip_path, vcf_filename=vcf_filename, global_trids=run_trids)
+            results, discordances, missing = run_analysis(
+                vcf_filename, sample_trids, run_trids, requested, label_priority, low_depth_threshold,
+            )
+        except Exception as e:
+            logging.error(f"Analysis failed for sample {sample_id}: {e}", exc_info=True)
+            failures.append((sample_id, str(e)))
             continue
 
-        trids_global = {trid_id: run.trids[trid_id] for trid_id in selected_trids}
-        samples = {trid_id: sample_trids[trid_id] for trid_id in selected_trids}
+        if discordances:
+            logging.warning(f"Motif discordances (BED vs clinical YAML) for {sample_id}: {discordances}")
+        if missing:
+            logging.warning(f"Loci missing from the VCF of {sample_id}: {missing}")
+        if not results:
+            logging.warning(f"No targeted loci identified for sample {sample_id}")
 
-        paths = {
-            "vcf": zip_path,
-            "repeat_reads": None,
-            "spanning_bam": None,
-            "motifs_allele": None,
-            "motifs_waterfall": None,
-            "meth_allele": None,
-            "meth_waterfall": None,
-            "genome_fasta": None
-        }
+        for result in results:
+            rows.append(build_row(result, run_id, sample_id, low_depth_threshold, provenance))
 
-        analysis_input = AnalysisInput(
-            sample_name=vcf_filename,
-            trids=trids_global,
-            samples=samples,
-            ordered_trids=selected_trids,
-            paths=paths,
-            label_priority=label_priority
-        )
-
-        # Run clinical evaluation and format results
-        process_clinical(analysis_input)
-        process_result(analysis_input)
-
-        # Structure results into TSV format
-        for trid_id in selected_trids:
-            sample_obj = analysis_input.samples.get(trid_id)
-            if not sample_obj or not getattr(sample_obj, "result", None):
-                continue
-
-            clinical_cfg = analysis_input.trids[trid_id].clinical
-            process_display(sample_obj.result, clinical_cfg, low_depth_threshold)
-
-            r = sample_obj.result
-            dr = r.display_row
-
-            # Check for low coverage flags
-            is_low = check_low_coverage_flag(dr)
-            comments = "Low coverage" if is_low else ""
-
-            # Sanitize sample name for presentation
-            clean_sample_id = sample_name.replace(".trgt.vcf", "").replace(".vcf", "")
-
-            # Reconstruction de la ligne de données en ignorant les arguments non spécifiés (None)
-            row = {}
-            if trgt_version is not None:
-                row["trgt_version"] = trgt_version
-            if bed_version is not None:
-                row["bed_version"] = bed_version
-            if run_id is not None:
-                row["run_id"] = run_id
-
-            row.update({
-                "sample_id": clean_sample_id,
-                "Locus": dr.locus,
-                "Depth": dr.depth,
-                "Genotype": dr.genotype,
-                "Classification": dr.classification,
-                "Comments": comments,
-            })
-            rows.append(row)
-
-    if rows:
-        write_output_file(out_tsv, rows)
-        logging.info(f"Results successfully exported to: {out_tsv}")
-    else:
-        logging.warning("No rows could be generated for export.")
+    return rows, failures
 
 
 # ---------------------------------------------------------------------------
 # Main Execution Block
 # ---------------------------------------------------------------------------
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Structured export for TRGT run analysis (command-line utility).")
     parser.add_argument("--zip", required=True, help="Path to the trgt_vcfs.zip archive")
-    parser.add_argument("--trgt-version", default=None, help="TRGT version used")
+    parser.add_argument("--trgt-version", default=None, help="Expected TRGT version (checked against ##trgtVersion of each VCF)")
     parser.add_argument("--bed-version", default=None, help="Clinical BED file version used")
-    parser.add_argument("--run-id", default=None, help="Unique identifier for the run")
+    parser.add_argument("--run-id", default=None, help="Unique identifier for the run (default: ZIP name prefix)")
     parser.add_argument("--out", default="tgv_export_ataxie.tsv", help="Output filename (must end in .csv, .tsv, or .xlsx)")
     parser.add_argument("--all-loci", action="store_true", help="Export all detected loci instead of filtering for the clinical (Ataxia) panel only")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Pre-validation of output format and dependencies
     _, ext = os.path.splitext(args.out.lower())
@@ -421,17 +374,34 @@ def main():
         )
 
     try:
-        export_run(
-            zip_path=args.zip, 
-            trgt_version=args.trgt_version, 
-            bed_version=args.bed_version, 
-            run_id=args.run_id, 
-            out_tsv=args.out,
-            all_loci=args.all_loci
+        rows, failures = export_run(
+            zip_path=args.zip,
+            trgt_version=args.trgt_version,
+            bed_version=args.bed_version,
+            run_id=args.run_id,
+            all_loci=args.all_loci,
         )
+        if rows:
+            write_output_file(args.out, rows)
+            logging.info(f"{len(rows)} rows successfully exported to: {args.out}")
+    except ConfigError as e:
+        logging.error(f"Data export aborted: {e}")
+        return EXIT_CONFIG
     except Exception as e:
         logging.error(f"Data export failed: {e}", exc_info=True)
+        return EXIT_FAILURE
+
+    if failures:
+        for sample_id, message in failures:
+            print(f"FAILED sample {sample_id}: {message}", file=sys.stderr)
+        return EXIT_FAILURE
+
+    if not rows:
+        logging.error("No rows could be generated for export.")
+        return EXIT_FAILURE
+
+    return EXIT_OK
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

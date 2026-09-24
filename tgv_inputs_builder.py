@@ -12,6 +12,7 @@ import concurrent.futures
 import subprocess
 import zipfile
 import glob
+import hashlib
 
 # Chargement optionnel des librairies
 try:
@@ -28,9 +29,16 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-# Crée le dossier logs à la racine du script
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Paramètres TRGT par défaut : résolus depuis le script, jamais depuis le répertoire courant
+DEFAULT_PARAMS_FILE = os.path.join(SCRIPT_DIR, "configs", "trgt_params.json5")
+
+# --fail-reads est apparu dans TRGT 5.1.0 (CHANGELOG)
+FAIL_READS_MIN_TRGT = (5, 1, 0)
+
+# Dossier des logs à la racine du script (créé au lancement)
+LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
 
 # Crée un fichier de log horodaté
 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -43,6 +51,7 @@ def setup_logging(log_file=None):
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
 
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.INFO)
 
@@ -152,7 +161,14 @@ def parse_bed_file(bed_path):
 
 
 def parse_list_samples(tsv_path, default_karyotype="XX"):
-    """Lit le TSV (2 ou 3 colonnes) et associe à chaque patient son BAM et son caryotype."""
+    """
+    Lit le TSV et associe à chaque patient son BAM, son caryotype et, en option,
+    un BAM de fail reads :
+        <sample_id> <tab> <bam_path> [<tab> <karyotype> [<tab> <fail_reads_bam>]]
+
+    Sans caryotype explicite, le caryotype par défaut est appliqué avec un WARNING :
+    en XX, FMR1 et AR sont génotypés en diploïde chez un patient XY.
+    """
     samples = {}
 
     with open(tsv_path, "r") as f:
@@ -162,20 +178,35 @@ def parse_list_samples(tsv_path, default_karyotype="XX"):
                 continue
 
             parts = line.split("\t")
-            if len(parts) < 2 or len(parts) > 3:
+            if len(parts) < 2 or len(parts) > 4:
                 logging.error(f"Invalid line in {tsv_path}: {line}")
-                logging.error("Expected format: <sample_id> <tab> <bam_path> [<tab> <karyotype>]")
+                logging.error("Expected format: <sample_id> <tab> <bam_path> [<tab> <karyotype> [<tab> <fail_reads_bam>]]")
                 continue
 
             sample_id = parts[0]
             bam_path = parts[1]
 
-            karyotype = parts[2] if len(parts) == 3 else default_karyotype
-            karyotype = karyotype.upper()
-            if karyotype not in ["XX", "XY"]:
-                if not os.path.exists(karyotype):
-                    logging.warning(f"Invalid karyotype '{karyotype}' for sample '{sample_id}'. Defaulting to '{default_karyotype}'.")
-                    karyotype = default_karyotype
+            declared = parts[2].strip() if len(parts) >= 3 else ""
+            karyotype_source = "list"
+            if not declared:
+                karyotype, karyotype_source = default_karyotype, "default"
+                logging.warning(
+                    f"No karyotype given for sample '{sample_id}': defaulting to '{default_karyotype}' "
+                    f"(chrX loci such as FMR1 are genotyped as diploid)."
+                )
+            elif declared.upper() in ("XX", "XY"):
+                karyotype = declared.upper()
+            elif os.path.exists(declared):
+                karyotype = declared  # fichier de caryotype : chemin conservé tel quel
+            else:
+                karyotype, karyotype_source = default_karyotype, "default"
+                logging.warning(f"Invalid karyotype '{declared}' for sample '{sample_id}'. Defaulting to '{default_karyotype}'.")
+
+            fail_reads = parts[3].strip() if len(parts) == 4 and parts[3].strip() else None
+            if fail_reads and not os.path.exists(fail_reads):
+                logging.warning(f"Fail reads BAM not found for sample '{sample_id}': {fail_reads}")
+                logging.warning(f"Sample '{sample_id}' will be skipped.")
+                continue
 
             if not os.path.exists(bam_path):
                 logging.warning(f"BAM not found for sample '{sample_id}': {bam_path}")
@@ -184,7 +215,9 @@ def parse_list_samples(tsv_path, default_karyotype="XX"):
 
             samples[sample_id] = {
                 "bam_path": bam_path,
-                "karyotype": karyotype
+                "karyotype": karyotype,
+                "karyotype_source": karyotype_source,
+                "fail_reads": fail_reads,
             }
 
     logging.info(f"{len(samples)} valid samples loaded from {tsv_path}")
@@ -346,7 +379,8 @@ def ask_plot_param_validated(key, current_val):
         print(f"  [HELP]  {PLOT_PARAM_HELP.get(key, '')}\n")
 
 
-def build_trgt_command(sample_id, bam_path, karyotype, threads_for_this_sample, args, trgt_params, output_root):
+def build_trgt_command(sample_id, bam_path, karyotype, threads_for_this_sample, args, trgt_params, output_root,
+                       fail_reads=None):
     sample_out = os.path.join(output_root, sample_id)
     os.makedirs(sample_out, exist_ok=True)
 
@@ -362,6 +396,11 @@ def build_trgt_command(sample_id, bam_path, karyotype, threads_for_this_sample, 
         "--threads", str(threads_for_this_sample),
         "--karyotype", karyotype
     ]
+
+    # Fail reads (TRGT >= 5.1.0) : --fail-reads désactive le filtre rq par défaut,
+    # d'où l'exigence d'un --min-read-quality explicite (vérifiée dans main)
+    if fail_reads:
+        cmd.extend(["--fail-reads", fail_reads])
 
     EXCLUDED_PARAMS = {"threads", "sample_name", "disable_bam_output", "karyotype"}
 
@@ -429,7 +468,7 @@ def create_sample_zip(directory, zip_path):
     return True
 
 
-def create_global_aggregations(output_root, run_name, samples, skip_plots=False):
+def create_global_aggregations(output_root, run_name, samples, skip_plots=False, run_manifest=None):
     logging.info("Starting final global aggregations...")
 
     if not skip_plots:
@@ -478,47 +517,133 @@ def create_global_aggregations(output_root, run_name, samples, skip_plots=False)
                 with gzip.open(vgz_path, 'rb') as f_in:
                     with vcf_zip.open(vcf_name, 'w') as f_out:
                         shutil.copyfileobj(f_in, f_out)
+            # Manifeste du run lu par TGV (provenance : caryotypes, paramètres, versions)
+            if run_manifest is not None:
+                vcf_zip.writestr("run_manifest.json", json.dumps(run_manifest, indent=2, sort_keys=True))
     else:
         logging.warning("No VCF files found for aggregation.")
+
+    if run_manifest is not None:
+        write_manifest(os.path.join(output_root, f"{run_name}-manifest.json"), run_manifest)
 
     input_bam_zip_name = f"{run_name}-repeat_reads.zip"
     input_bam_zip_path = os.path.join(output_root, input_bam_zip_name)
 
-    input_files_to_zip = []
+    # Nommage explicite par patient ({sample_id}.repeat_reads.bam) : TGV retrouve le BAM
+    # d'un patient par correspondance exacte, sans dépendre du nom d'origine du fichier
+    input_files_to_zip = []  # (chemin source, nom dans l'archive)
     for sample_id, info in samples.items():
         bpath = info["bam_path"]
         if os.path.exists(bpath):
-            input_files_to_zip.append(bpath)
+            arc_bam = f"{sample_id}.repeat_reads.bam"
+            input_files_to_zip.append((bpath, arc_bam))
             bai_1 = bpath + ".bai"
             bai_2 = bpath[:-4] + ".bai" if bpath.endswith(".bam") else None
             if os.path.exists(bai_1):
-                input_files_to_zip.append(bai_1)
+                input_files_to_zip.append((bai_1, arc_bam + ".bai"))
             elif bai_2 and os.path.exists(bai_2):
-                input_files_to_zip.append(bai_2)
+                input_files_to_zip.append((bai_2, arc_bam + ".bai"))
 
     if input_files_to_zip:
         logging.info(f"Aggregating {len(input_files_to_zip)} initial BAM/BAI files into {input_bam_zip_name} (Fast Copy mode)...")
         with zipfile.ZipFile(input_bam_zip_path, 'w', zipfile.ZIP_STORED) as ib_zip:
-            for ffile in input_files_to_zip:
-                ib_zip.write(ffile, os.path.basename(ffile))
+            for ffile, arcname in input_files_to_zip:
+                ib_zip.write(ffile, arcname)
     else:
         logging.warning("No initial BAM/BAI files found for repeat_reads aggregation.")
 
 
-def run_trgt_genotype(sample_id, bam_path, karyotype, threads_for_this_sample, args, trgt_params, output_root):
-    """Exécute la phase de génotypage, tri et indexation pour un échantillon."""
+# --- MANIFESTES (traçabilité et reprise) ---
+
+# Paramètres sans effet sur les résultats (exclus de l'empreinte de reprise)
+NON_RESULT_PARAMS = {"threads", "verbose", "color"}
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def get_trgt_version(trgt_exe):
+    """Version de TRGT ('trgt --version'), ex. '5.1.0' ; '' si indéterminable."""
+    try:
+        proc = subprocess.run([trgt_exe, "--version"], capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        logging.warning(f"Cannot determine TRGT version: {e}")
+        return ""
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", proc.stdout + proc.stderr)
+    return match.group(0) if match else ""
+
+
+def version_tuple(version):
+    try:
+        return tuple(int(x) for x in version.split(".")[:3])
+    except (AttributeError, ValueError):
+        return ()
+
+
+def genotype_fingerprint(sample_id, info, args, trgt_params, trgt_version, bed_sha256):
+    """Tout ce qui détermine le résultat du génotypage d'un échantillon."""
+    fail_reads = info.get("fail_reads")
+    return {
+        "sample_id": sample_id,
+        "bam_path": os.path.abspath(info["bam_path"]),
+        "fail_reads": os.path.abspath(fail_reads) if fail_reads else None,
+        "karyotype": info["karyotype"],
+        "reference": os.path.abspath(args.reference),
+        "bed": os.path.abspath(args.bed),
+        "bed_sha256": bed_sha256,
+        "trgt_version": trgt_version,
+        "trgt_params": {k: trgt_params[k] for k in sorted(trgt_params) if k not in NON_RESULT_PARAMS},
+    }
+
+
+def sample_manifest_path(output_root, sample_id):
+    return os.path.join(output_root, sample_id, f"{sample_id}.trgt.manifest.json")
+
+
+def read_manifest(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def write_manifest(path, content):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(content, f, indent=2, sort_keys=True)
+
+
+def run_trgt_genotype(sample_id, bam_path, karyotype, threads_for_this_sample, args, trgt_params, output_root,
+                      fail_reads=None, fingerprint=None):
+    """
+    Exécute la phase de génotypage, tri et indexation pour un échantillon.
+
+    Des sorties existantes ne sont réutilisées que si le manifeste de l'échantillon
+    correspond exactement à l'empreinte courante (BED, référence, paramètres,
+    version de TRGT, caryotype, fail reads).
+    """
     sample_out = os.path.join(output_root, sample_id)
     os.makedirs(sample_out, exist_ok=True)
 
     sorted_vcf = os.path.join(sample_out, f"{sample_id}.trgt.sorted.vcf.gz")
     sorted_bam = os.path.join(sample_out, f"{sample_id}.trgt.spanning.sorted.bam")
+    manifest_file = sample_manifest_path(output_root, sample_id)
 
     vcf_ok = check_indexed_file_exists(sorted_vcf, [".tbi", ".csi"])
     bam_ok = check_indexed_file_exists(sorted_bam, [".bai"])
 
     if vcf_ok and bam_ok:
-        logging.info(f"Sample {sample_id} is already genotyped. Skipping genotyping.")
-        return sample_id, sorted_vcf, sorted_bam
+        previous = read_manifest(manifest_file)
+        if fingerprint is not None and previous == fingerprint:
+            logging.info(f"Sample {sample_id} is already genotyped with identical inputs. Skipping genotyping.")
+            return sample_id, sorted_vcf, sorted_bam
+        reason = "no manifest" if previous is None else "different inputs or parameters"
+        logging.warning(f"Existing outputs for sample {sample_id} cannot be reused ({reason}). Re-genotyping.")
 
     logging.info(f"Starting genotype for sample: {sample_id} with {threads_for_this_sample} threads ({karyotype})")
 
@@ -535,7 +660,10 @@ def run_trgt_genotype(sample_id, bam_path, karyotype, threads_for_this_sample, a
             logging.error(f"Failed to generate index for input BAM {bam_path} (exit code {e.returncode})")
             raise e
 
-    cmd, sample_out = build_trgt_command(sample_id, bam_path, karyotype, threads_for_this_sample, args, trgt_params, output_root)
+    cmd, sample_out = build_trgt_command(
+        sample_id, bam_path, karyotype, threads_for_this_sample, args, trgt_params, output_root,
+        fail_reads=fail_reads,
+    )
 
     try:
         result = subprocess.run(
@@ -584,6 +712,9 @@ def run_trgt_genotype(sample_id, bam_path, karyotype, threads_for_this_sample, a
                 os.remove(raw_bam)
         else:
             logging.error(f"Raw BAM missing for {sample_id}. Skipping BAM sorting.")
+
+        if fingerprint is not None:
+            write_manifest(manifest_file, fingerprint)
 
     except subprocess.CalledProcessError as e:
         logging.error(f"TRGT or post-processing failed for sample {sample_id} (exit code {e.returncode})")
@@ -886,7 +1017,7 @@ def generate_qc_boxplots(read_count_matrix, sample_list, repeat_ids, output_root
         ax.set_title(f"{run_name} - BAM coverage distribution per sample", fontsize=11, fontweight='bold')
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        sample_svg = os.path.join(output_root, f"reads_per_sample_boxplot.svg")
+        sample_svg = os.path.join(output_root, "reads_per_sample_boxplot.svg")
         fig.savefig(sample_svg, format='svg')
         plt.close(fig)
         png_paths.append(sample_svg)
@@ -933,7 +1064,7 @@ def generate_qc_boxplots(read_count_matrix, sample_list, repeat_ids, output_root
         ax.set_title(f"{run_name} - BAM coverage distribution per locus", fontsize=11, fontweight='bold')
         plt.xticks(rotation=90)
         plt.tight_layout()
-        locus_svg = os.path.join(output_root, f"reads_per_locus_boxplot.svg")
+        locus_svg = os.path.join(output_root, "reads_per_locus_boxplot.svg")
         fig.savefig(locus_svg, format='svg')
         plt.close(fig)
         png_paths.append(locus_svg)
@@ -1449,6 +1580,55 @@ def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals
     return qz_zip_path
 
 
+def load_trgt_params(params_file):
+    """
+    Charge le fichier de paramètres TRGT (JSON5). Absent ou illisible → arrêt :
+    sans paramètres, TRGT tournerait avec son preset par défaut ('wgs').
+    Retourne (genotype, plot, coverage_thresholds, coverage_colors, coverage_labels).
+    """
+    if json5 is None:
+        logging.error("The 'json5' module is required to read TRGT parameters (pip install -r requirements-builder.txt).")
+        sys.exit(1)
+    if not os.path.isfile(params_file):
+        logging.error(f"TRGT parameters file not found: {params_file}")
+        sys.exit(1)
+    try:
+        with open(params_file, "r", encoding="utf-8") as f:
+            config = json5.load(f)
+    except Exception as e:
+        logging.error(f"Cannot read TRGT parameters file {params_file}: {e}")
+        sys.exit(1)
+
+    logging.info(f"TRGT parameters loaded from: {os.path.abspath(params_file)}")
+    return (
+        config.get("genotype", {}) or {},
+        config.get("plot", {}) or {},
+        config.get("coverage_thresholds"),
+        config.get("coverage_colors"),
+        config.get("coverage_labels"),
+    )
+
+
+def check_fail_reads_requirements(samples, trgt_params, trgt_version):
+    """
+    --fail-reads nécessite TRGT >= 5.1.0 et désactive le filtre rq par défaut sauf si
+    --min-read-quality est fixé explicitement (TRGT CHANGELOG 5.1.0) : on l'exige.
+    """
+    with_fail_reads = [s for s, info in samples.items() if info.get("fail_reads")]
+    if not with_fail_reads:
+        return
+    logging.info(f"Fail reads BAM provided for {len(with_fail_reads)} sample(s): {with_fail_reads}")
+    if version_tuple(trgt_version) < FAIL_READS_MIN_TRGT:
+        logging.error(f"--fail-reads requires TRGT >= 5.1.0 (detected: '{trgt_version or 'unknown'}').")
+        sys.exit(1)
+    if trgt_params.get("min-read-quality") is None:
+        logging.error(
+            "Fail reads require an explicit 'min-read-quality' in the TRGT genotype parameters "
+            "(otherwise TRGT disables its read-quality filter)."
+        )
+        sys.exit(1)
+
+
 def main():
     setup_logging(log_file)
 
@@ -1461,9 +1641,6 @@ def main():
     if not HAS_MATPLOTLIB:
         logging.warning("The 'matplotlib' library is missing. Quality Control plots (boxplots and quality matrix) will not be generated.")
     
-    if json5 is None:
-        logging.warning("The 'json5' module is missing. Advanced configuration reading from 'configs/trgt_params.json5' is disabled; default parameters will be used.")
-
     parser = argparse.ArgumentParser(description="TGV Inputs Builder")
 
     parser.add_argument('--trgt', dest='trgt', default='trgt', help="Path to TRGT executable")
@@ -1477,6 +1654,8 @@ def main():
     parser.add_argument('--non-interactive', action='store_true')
     parser.add_argument('--keep-temp', action='store_true')
     parser.add_argument('--skip-plots', action='store_true')
+    parser.add_argument('--params', dest='params', default=DEFAULT_PARAMS_FILE,
+                        help="TRGT parameters file (JSON5). Default: configs/trgt_params.json5 next to this script")
 
     args = parser.parse_args()
 
@@ -1489,21 +1668,7 @@ def main():
     check_file(args.list_samples)
     check_fasta_index(args.reference, args.samtools)
 
-    params_file = os.path.join("configs", "trgt_params.json5")
-    if os.path.exists(params_file) and json5 is not None:
-        with open(params_file, "r") as f:
-            config = json5.load(f)
-            trgt_params = config.get("genotype", {})
-            plot_params = config.get("plot", {})
-            cov_thresholds = config.get("coverage_thresholds", {})
-            cov_colors = config.get("coverage_colors", {})
-            cov_labels = config.get("coverage_labels", {})
-
-
-    else:
-        logging.warning("configs/trgt_params.json5 missing or json5 module unavailable. Running with empty parameters.")
-        trgt_params = {}
-        plot_params = {}
+    trgt_params, plot_params, cov_thresholds, cov_colors, cov_labels = load_trgt_params(args.params)
 
     if not args.non_interactive:
         print("\nCurrent TRGT genotype parameters:")
@@ -1535,6 +1700,11 @@ def main():
     else:
         logging.info("Non-interactive mode active.")
 
+    if trgt_params.get("preset"):
+        logging.info(f"TRGT preset: {trgt_params['preset']}")
+    else:
+        logging.warning("No 'preset' in TRGT genotype parameters: TRGT will use its default preset ('wgs').")
+
     default_karyotype = trgt_params.get("karyotype", "XX")
     samples = parse_list_samples(args.list_samples, default_karyotype=default_karyotype)
     num_samples = len(samples)
@@ -1542,6 +1712,16 @@ def main():
     if num_samples == 0:
         logging.error("No valid samples to process. Exiting.")
         sys.exit(1)
+
+    trgt_version = get_trgt_version(args.trgt)
+    logging.info(f"TRGT version: {trgt_version or 'unknown'}")
+    check_fail_reads_requirements(samples, trgt_params, trgt_version)
+
+    bed_sha256 = file_sha256(args.bed)
+    fingerprints = {
+        sample_id: genotype_fingerprint(sample_id, info, args, trgt_params, trgt_version, bed_sha256)
+        for sample_id, info in samples.items()
+    }
 
     repeat_ids, bed_intervals = parse_bed_file(args.bed)
     num_repeats = len(repeat_ids)
@@ -1556,7 +1736,7 @@ def main():
     max_parallel_jobs = max(1, min(num_samples, total_threads // target_threads_per_job))
     threads_per_job = max(1, total_threads // max_parallel_jobs)
 
-    logging.info(f"Resource Scheduler Plan:")
+    logging.info("Resource Scheduler Plan:")
     logging.info(f"  - Total thread budget: {total_threads}")
     logging.info(f"  - Parallel genotyping processes: {max_parallel_jobs}")
     logging.info(f"  - Threads per process: {threads_per_job}")
@@ -1577,7 +1757,9 @@ def main():
                 threads_per_job,
                 args,
                 trgt_params,
-                output_root
+                output_root,
+                info.get("fail_reads"),
+                fingerprints[sample_id],
             ): sample_id
             for sample_id, info in samples.items()
         }
@@ -1729,7 +1911,28 @@ def main():
     # =========================================================================
     # PHASE 4 : AGREGATION GLOBALE DES RESULTATS
     # =========================================================================
-    create_global_aggregations(output_root, args.run_name, samples, skip_plots=args.skip_plots)
+    run_manifest = {
+        "run_name": args.run_name,
+        "created": datetime.now().isoformat(timespec="seconds"),
+        "trgt_version": trgt_version,
+        "reference": os.path.abspath(args.reference),
+        "bed": os.path.abspath(args.bed),
+        "bed_sha256": bed_sha256,
+        "params_file": os.path.abspath(args.params),
+        "trgt_params": trgt_params,
+        "samples": {
+            sample_id: {
+                "karyotype": info["karyotype"],
+                "karyotype_source": info.get("karyotype_source", "list"),
+                "bam": os.path.basename(info["bam_path"]),
+                "fail_reads": os.path.basename(info["fail_reads"]) if info.get("fail_reads") else None,
+                "genotyped": sample_id in completed_samples,
+            }
+            for sample_id, info in samples.items()
+        },
+    }
+    create_global_aggregations(output_root, args.run_name, samples, skip_plots=args.skip_plots,
+                               run_manifest=run_manifest)
 
     # =========================================================================
     # PHASE 5 : NETTOYAGE DES DOSSIERS DE SAMPLES INDIVIDUELS
@@ -1747,6 +1950,11 @@ def main():
         logging.info("Individual sample directories cleanup completed successfully.")
     else:
         logging.info("Keeping individual sample directories (--keep-temp is active).")
+
+    failed = [sample_id for sample_id in samples if sample_id not in completed_samples]
+    if failed:
+        logging.error(f"TGV Inputs Builder completed with genotyping failures for: {failed}")
+        sys.exit(1)
 
     logging.info("TGV Inputs Builder completed successfully.")
 

@@ -92,10 +92,7 @@ def autodetect_trids(zip_path):
     diseases = {}
 
     for trid in trids:
-        if "_" in trid:
-            prefix, gene = trid.split("_", 1)
-        else:
-            prefix = gene = trid
+        gene = trid.split("_", 1)[1] if "_" in trid else trid
 
         trid_to_gene[trid] = gene
         diseases[make_readable_name(trid)] = trid

@@ -12,19 +12,6 @@ class DisplayRow:
         self.seg1 = None
         self.seg2 = None
 
-    def to_list(self):
-        return [
-            self.locus,
-            self.depth,
-            self.size,
-            self.motifs,
-            self.genotype,
-            self.classification,
-            self.rep1,
-            self.rep2,
-            self.seg1,
-            self.seg2,
-        ]
 
 
 class DisplayDetails:
@@ -60,15 +47,6 @@ class DisplayExport:
         self.genotype = None
         self.classification = None
 
-    def to_list(self):
-        return [
-            self.locus,
-            self.depth,
-            self.size,
-            self.motifs,
-            self.genotype,
-            self.classification,
-        ]
 
 
 class DisplayHtml:

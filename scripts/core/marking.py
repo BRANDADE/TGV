@@ -26,9 +26,10 @@ def mark_pathogenic_genotype(genotype_str, pathogenic_motifs, ui=False):
     mark = PATHO_UI if ui else PATHO_HTML
     pathogenic = sorted(pathogenic_motifs or [], key=len, reverse=True)
 
-    # On marque uniquement les motifs, pas les chiffres
+    # On marque uniquement les motifs entiers, pas les chiffres ni les sous-chaînes
+    # (le motif bénin AAAGGG ne doit pas devenir A●AAGGG)
     for motif in pathogenic:
-        genotype_str = genotype_str.replace(motif, f"{mark}{motif}")
+        genotype_str = re.sub(rf"(?<![A-Z]){re.escape(motif)}(?![A-Z])", f"{mark}{motif}", genotype_str)
 
     return genotype_str
 

@@ -16,6 +16,9 @@ class ClinicalConfig:
 
         self.groups = {}
 
+        # Référence(s) des seuils (champ 'source' du YAML), ex. 'HAS - Volet 1 (02-2025)'
+        self.source = ""
+
 
 
 class ClinicalGroup:

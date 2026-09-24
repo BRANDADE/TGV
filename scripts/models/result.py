@@ -21,12 +21,17 @@ class Result:
         self.end = None
         self.position = None
 
+        # Le locus possède une configuration clinique (bloc YAML) et sa référence
+        self.has_clinical = False
+        self.thresholds_source = ""
+
         # Motifs
         self.motifs_raw = None
         self.motifs_used1 = None
         self.motifs_used2 = None
 
         # --- Allèle 1 ---
+        self.status1 = None
         self.depth1_raw = None
         self.size1_raw = None
         self.range_size1_raw = None
@@ -43,8 +48,10 @@ class Result:
         self.genotype1_bio = None
         self.classification1_raw = None
         self.classification1_bio = None
+        self.classification1_note = None
 
         # --- Allèle 2 ---
+        self.status2 = None
         self.depth2_raw = None
         self.size2_raw = None
         self.range_size2_raw = None
@@ -61,6 +68,7 @@ class Result:
         self.genotype2_bio = None
         self.classification2_raw = None
         self.classification2_bio = None
+        self.classification2_note = None
 
         # --- Objets dérivés ---
         self.display_row = None

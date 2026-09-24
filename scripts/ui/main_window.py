@@ -6,19 +6,17 @@ import re
 import logging
 
 from scripts.models.run import Run
-from scripts.models.trid import TRID
-from scripts.models.dto import AnalysisInput
 
 from scripts.core.vcf_loader import list_vcfs
 from scripts.core.vcf_parser import parse_vcf_for_sample
 from scripts.core.utils import get_analysis_prefix
-from scripts.core.sequence_utils import reverse_complement
-from scripts.core.trid_detector import autodetect_trids
+from scripts.core.artifact_lookup import sample_id_from_vcf_name
 from scripts.core.config_manager import get_safe_config_path
-from scripts.core.orchestrator import process_clinical, process_result, process_display
 
-from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds
-from scripts.bio.clinical_config_builder import build_clinical_config
+from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds, load_trid_aliases
+from scripts.bio.clinical_config_validator import validate_thresholds
+from scripts.core.analysis import build_run_trids, resolve_panel, run_analysis
+from scripts.core.provenance import read_vcf_header, thresholds_sha256, tgv_provenance
 
 from scripts.ui.results_window import show_results_window
 from scripts.ui.igv import is_online, get_asset_path
@@ -87,52 +85,6 @@ def get_trids_with_clinical(window):
         for trid_id, trid in run.trids.items()
         if getattr(trid, "clinical", None) is not None
     }
-
-
-# ---------------------------------------------------------
-# Label priority
-# ---------------------------------------------------------
-def ask_priority(declared_label, menu_text):
-    layout = [
-        [sg.Text(
-            f"Le label clinique '{declared_label}' n'existe pas dans label_priority.\n\n"
-            f"{menu_text}\n"
-            f"Où souhaitez-vous insérer '{declared_label}' ?\n"
-            f"Entrez une priorité (entier) :\n"
-            f"- Si vous entrez 2 → le label sera inséré à la position 2\n"
-            f"- Les priorités >= 2 seront décalées automatiquement\n\n"
-            f"(Correction TEMPORAIRE, le YAML n'est pas modifié.)"
-        )],
-        [sg.Input(key='-PRIO-', focus=True)],
-        [sg.Button("Valider", bind_return_key=True)]  
-    ]
-
-    win = sg.Window(
-        "Insertion d'un label clinique",
-        layout,
-        modal=True,
-        keep_on_top=True,
-        disable_close=True
-    )
-
-    while True:
-        event, values = win.read()
-
-        if event == "Valider":
-            user_choice = values['-PRIO-'].strip()
-
-            if user_choice == "":
-                sg.popup_error("Vous devez entrer une priorité numérique.", keep_on_top=True)
-                continue
-
-            try:
-                insert_pos = int(user_choice)
-                win.close()
-                return insert_pos
-            except ValueError:
-                sg.popup_error("La priorité doit être un entier.", keep_on_top=True)
-                continue
-
 
 
 # ---------------------------------------------------------
@@ -226,11 +178,6 @@ def run_main_window():
     # Modification du titre officiel de la fenêtre
     window = sg.Window("TGV - TRGT Global Viewer", layout, finalize=True)
     
-    try:
-        window.TKroot.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
-    except Exception as e:
-        logging.warning(f"Failed to bind main window protocol: {e}")
-
 
     window.metadata = {
         "all_samples": [],
@@ -295,6 +242,18 @@ def run_main_window():
                 continue
 
             logging.info(f"Loading main TRGT ZIP archive: {zip_path}")
+
+            # Nouveau run : rien de l'ancien run ne doit subsister (sélection de loci,
+            # patient, allèles parsés)
+            window.metadata.pop("run", None)
+            window.metadata["current_trids"] = {}
+            window.metadata["current_sample"] = None
+            window.metadata["selected_trids"] = []
+            window.metadata["all_samples"] = []
+            window["-SAMPLE-"].update(values=[], value="")
+            update_trid_selected(window)
+            window["-STATUS-"].update("")
+
             vcfs = list_vcfs(zip_path)
             if not vcfs:
                 logging.error(f"Selected ZIP archive contains no .trgt.vcf files: {zip_path}")
@@ -382,111 +341,52 @@ def run_main_window():
             # Stocker la liste complète
             window.metadata["all_samples"] = display
 
-            # Détection TRIDs globaux
-            trids, trid_to_gene, diseases, static_info = autodetect_trids(zip_path)
-
+            # ---------------------------------------------------------
+            # Configuration clinique : validation avant tout usage
+            # ---------------------------------------------------------
             thresholds_data = load_clinical_thresholds()
-            label_priority = thresholds_data.get("label_priority", {})
+            errors, warnings = validate_thresholds(thresholds_data)
 
-            low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
+            for w in warnings:
+                logging.warning(f"clinical_thresholds.yaml: {w}")
 
-            if not label_priority:
+            if errors:
+                for e in errors:
+                    logging.error(f"clinical_thresholds.yaml: {e}")
                 sg.popup_error(
-                    "Configuration clinique incomplète",
-                    "La section 'label_priority' doit être définie dans clinical_thresholds.yaml."
+                    "clinical_thresholds.yaml est invalide ; le run n'est pas chargé.\n\n"
+                    + "\n".join(f" - {e}" for e in errors),
+                    title="Configuration clinique invalide",
+                    keep_on_top=True,
                 )
-                return
+                window["-SAMPLE-"].update(values=[], value="")
+                window.metadata["all_samples"] = []
+                continue
 
-            # ---------------------------------------------------------
-            # Protection : détecter les doublons de priorité
-            # ---------------------------------------------------------
-            prio_to_labels = {}
-            for lbl, prio in label_priority.items():
-                prio_to_labels.setdefault(prio, []).append(lbl)
+            if warnings and not window.metadata.get("yaml_warnings_shown"):
+                window.metadata["yaml_warnings_shown"] = True
+                sg.popup_scrolled(
+                    "Avertissements de configuration (clinical_thresholds.yaml).\n"
+                    "Les valeurs concernées seront classées 'unclassified'.\n\n"
+                    + "\n".join(f" - {w}" for w in warnings),
+                    title="Configuration clinique",
+                    size=(100, 20),
+                )
 
-            duplicates = {prio: labs for prio, labs in prio_to_labels.items() if len(labs) > 1}
-
-            if duplicates:
-                msg = "Le fichier clinical_thresholds.yaml contient des priorités dupliquées :\n\n"
-                for prio, labs in duplicates.items():
-                    msg += f"Priorité {prio} : {', '.join(labs)}\n"
-
-                msg += "\nChaque label doit avoir une priorité unique.\nCorrigez le YAML puis relancez l'analyse."
-
-                sg.popup_error(msg, keep_on_top=True)
-                return
-
-            
-            logging.info(f"Initializing {len(trids)} genomic loci structures...")
+            label_priority = thresholds_data["label_priority"]
+            low_depth_threshold = thresholds_data.get("low_depth_threshold", None)
+            logging.info(f"clinical_thresholds.yaml SHA-256: {thresholds_sha256()}")
 
             # ---------------------------------------------------------
             # Création des TRIDs globaux + remplissage infos immuables + clinique
             # ---------------------------------------------------------
-            for trid_id in trids:
-                t = TRID(trid_id)
+            trids, diseases, run.trids = build_run_trids(zip_path, thresholds_data, load_trid_aliases())
+            logging.info(f"Initialized {len(trids)} genomic loci structures.")
 
-                # --- Infos TRGT immuables ---
-                if trid_id in static_info:
-                    info = static_info[trid_id]
-                    t.chrom = info["chrom"]
-                    t.start = info["start"]
-                    t.end = info["end"]
-                    t.motifs = info["motifs"]
-
-                # --- Bloc YAML du TRID (sous-bloc) ---
-                trid_yaml_block = thresholds_data.get(trid_id)
-                logging.debug(f"YAML block found for {trid_id}: {trid_yaml_block is not None}")
-
-                if trid_yaml_block:
-                    t.clinical = build_clinical_config(trid_id, thresholds_data)
-
-                    # --- Protection : labels déclarés dans les groupes cliniques ---
-                    if t.clinical:
-                        for group_id, group in t.clinical.groups.items():
-
-                            declared_labels = list(group.thresholds.keys())
-                            for rule in group.structure_rules:
-                                declared_labels.append(rule["conditions"]["classification"])
-
-                            for declared_label in declared_labels:
-
-                                if declared_label not in label_priority:
-
-                                    priorities_sorted = sorted(label_priority.items(), key=lambda x: x[1])
-
-                                    menu_text = "Priorités existantes :\n\n"
-                                    for lbl, prio in priorities_sorted:
-                                        menu_text += f"  {prio} : {lbl}\n"
-
-                                    # --- Popup SANS Cancel ---
-                                    insert_pos = ask_priority(declared_label, menu_text)
-
-                                    # --- Recalcul automatique ---
-                                    new_priority_map = {}
-                                    for lbl, prio in priorities_sorted:
-                                        new_priority_map[lbl] = prio + 1 if prio >= insert_pos else prio
-
-                                    new_priority_map[declared_label] = insert_pos
-
-                                    label_priority = dict(sorted(new_priority_map.items(), key=lambda x: x[1]))
-
-                                    logging.warning(
-                                        f"Clinical label '{declared_label}' inserted at priority {insert_pos}. "
-                                        f"Priority table successfully updated."
-                                    )
-
-                    # --- Orientation RC ---
-                    if t.clinical.orientation.lower() == "rc":
-                        t.motifs_rc = [reverse_complement(m) for m in t.motifs]
-
-
-                run.trids[trid_id] = t
-
-                # --- DEBUG ---
+            for trid_id, t in run.trids.items():
                 logging.debug(f"Locus: {trid_id} | Chrom: {t.chrom} | Coords: {t.start}-{t.end} | Motifs: {t.motifs}")
                 if t.clinical:
                     logging.debug(f"  Clinical Config: Mode={t.clinical.classification_mode} | Groups={list(t.clinical.groups.keys())}")
-
 
             logging.info("Successfully initialized all genomic loci structures.")
 
@@ -549,7 +449,9 @@ def run_main_window():
                 logging.warning("User triggered patient selection but no sample name was found")
                 continue
 
-            run = window.metadata["run"]
+            run = window.metadata.get("run")
+            if not run:
+                continue
 
             # Parser le VCF → retourne { trid_id : Sample }
             sample_trids = parse_vcf_for_sample(
@@ -565,6 +467,7 @@ def run_main_window():
 
             # Stockage UI
             window.metadata["current_trids"] = sample_trids
+            window.metadata["current_sample"] = sample_name
 
             # Mise à jour TRID lisibles
             readable_map = window.metadata["readable_to_trid"]
@@ -672,9 +575,8 @@ def run_main_window():
             panels = window.metadata["button_panels"]
             if panel_name in panels:
                 requested = panels[panel_name]
-                detected = set(window.metadata["all_trids"])
-                existing = [t for t in requested if t in detected]
-                missing = [t for t in requested if t not in detected]
+                run = window.metadata.get("run")
+                existing, missing = resolve_panel(requested, run.trids if run else {})
 
                 window.metadata["selected_trids"] = existing
                 update_trid_selected(window)
@@ -705,82 +607,76 @@ def run_main_window():
                 window["-STATUS-"].update("Veuillez sélectionner au moins un locus", text_color="red")
                 continue
 
-            # TRIDs globaux sélectionnés
-            trids_global = {
-                trid_id: run.trids[trid_id]
-                for trid_id in selected_trids
-                if trid_id in run.trids
+            # Seuls les loci présents chez ce patient sont analysés ; les autres sont signalés.
+            # Les allèles doivent être ceux du patient affiché (re-parsing si besoin).
+            if window.metadata.get("current_sample") != sample_name:
+                window.metadata["current_trids"] = parse_vcf_for_sample(run.vcf_zip, sample_name, run.trids)
+                window.metadata["current_sample"] = sample_name
+            sample_trids = window.metadata["current_trids"]
+            paths = {
+                "vcf": run.vcf_zip,
+                "repeat_reads": run.repeat_reads_zip,
+                "spanning_bam": run.spanning_bam_zip,
+                "motifs_allele": run.motifs_allele_zip,
+                "motifs_waterfall": run.motifs_waterfall_zip,
+                "meth_allele": run.meth_allele_zip,
+                "meth_waterfall": run.meth_waterfall_zip,
+                "genome_fasta": fasta_path,
             }
 
-            # Samples associés à ces TRIDs
-            samples = {
-                trid_id: run.trids[trid_id].samples.get(sample_name)
-                for trid_id in selected_trids
-                if trid_id in run.trids
-            }
+            logging.info(f"Initiating clinical analysis for patient: '{sample_name}' - Loci selected: {len(selected_trids)}")
+            for path_key, path_val in paths.items():
+                logging.debug(f"    Param path -> {path_key}: {path_val}")
 
-            analysis_input = AnalysisInput(
-                sample_name=sample_name,
-                trids=trids_global,
-                samples=samples,
-                ordered_trids=selected_trids,
-                paths={
-                    "vcf": run.vcf_zip,
-                    "repeat_reads": run.repeat_reads_zip,
-                    "spanning_bam": run.spanning_bam_zip,
-                    "motifs_allele": run.motifs_allele_zip,
-                    "motifs_waterfall": run.motifs_waterfall_zip,
-                    "meth_allele": run.meth_allele_zip,
-                    "meth_waterfall": run.meth_waterfall_zip,
-                    "genome_fasta" : fasta_path
-                },
-                label_priority=window.metadata["label_priority"]
+            label_priority = window.metadata["label_priority"]
+            results, discordances, missing = run_analysis(
+                sample_name, sample_trids, run.trids, selected_trids,
+                label_priority, low_depth_threshold, paths=paths,
             )
 
-            # Logs de lancement de l'analyse et suivi du génome de référence
-            logging.info(f"Initiating clinical analysis for patient: '{sample_name}' - Loci selected: {len(selected_trids)}")     
+            if discordances:
+                sg.popup_error(
+                    "Discordance entre les motifs TRGT (BED) et les seuils cliniques définis dans "
+                    "clinical_thresholds.yaml pour les locus suivants :\n\n"
+                    + "\n".join(f" - {trid}" for trid in discordances),
+                    title="Discordance clinique détectée",
+                )
 
-            # --- DEBUG ---
-            logging.debug(f"AnalysisInput structure created for sample '{analysis_input.sample_name}':")
-            logging.debug(f"    Selected loci list: {analysis_input.ordered_trids}")
-            for path_key, path_val in analysis_input.paths.items():
-                logging.debug(f"    Param path -> {path_key}: {path_val}")
-            
-            logging.info("Executing clinical classification algorithms...")
-            process_clinical(analysis_input)
+            if missing:
+                trid_to_readable = {v: k for k, v in window.metadata["readable_to_trid"].items()}
+                missing_readable = [trid_to_readable.get(t, t) for t in missing]
+                logging.warning(f"Loci absent from the VCF of '{sample_name}': {missing}")
+                window["-STATUS-"].update(
+                    "Absents du VCF du patient : " + ", ".join(missing_readable), text_color="red"
+                )
+            else:
+                window["-STATUS-"].update("")
 
-            logging.info("Formatting analytical results...")
-            process_result(analysis_input)
+            if not results:
+                continue
 
-            results = []   # liste de Result
-
-            for trid_id, sample in analysis_input.samples.items():
-                if not sample or not sample.result:
-                    logging.warning(f"Locus '{trid_id}' was requested but no valid sample data or classification result was found.")
-                    continue
-
-                clinical_cfg = analysis_input.trids[trid_id].clinical
-
-                # Construit display_row / display_details / display_export / display_html
-                process_display(sample.result, clinical_cfg, low_depth_threshold)
-
-                # On stocke l'objet Result complet
-                results.append(sample.result)
-                
             # Appelle l'UI avec la liste de Result
             logging.info(f"Analysis completed. Successfully processed {len(results)}/{len(selected_trids)} loci.")
             logging.info(f"Opening results visualization window for patient: '{sample_name}'")
 
             run_id = run.name if run else ""
 
+            # Provenance affichée dans l'export : TGV, TRGT (en-tête VCF), catalogue, YAML
+            provenance = tgv_provenance()
+            try:
+                provenance.update(read_vcf_header(run.vcf_zip, sample_name))
+            except Exception as e:
+                logging.warning(f"Cannot read TRGT header of '{sample_name}': {e}")
+
             show_results_window(
-                sample_name=sample_name.split(".trgt")[0],
+                sample_name=sample_id_from_vcf_name(sample_name),
                 results=results,
-                label_priority=analysis_input.label_priority,
-                paths=analysis_input.paths,
+                label_priority=label_priority,
+                paths=paths,
                 online_status=online_status,
                 low_depth_threshold=low_depth_threshold,
-                run_id=run_id
+                run_id=run_id,
+                provenance=provenance,
             )
 
     window.close()

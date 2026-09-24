@@ -15,6 +15,14 @@ class TRID:
         # Config clinique (YAML)
         self.clinical = None
 
+        # Bloc de clinical_thresholds.yaml utilisé (TRID lui-même, ou alias
+        # défini dans configs/trid_aliases.yaml)
+        self.clinical_key = None
+
+        # Motifs du catalogue (orientés) renommés dans le cadre de lecture du YAML :
+        # {motif catalogue: motif YAML}, ex. {"GCA": "CAG"} pour ATXN1 (catalogue TGC, RC)
+        self.motif_frame = {}
+
         # Samples pour ce TRID
         self.samples = {}
 

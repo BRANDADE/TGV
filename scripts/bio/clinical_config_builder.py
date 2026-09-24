@@ -1,6 +1,7 @@
 from scripts.models.clinical_config import ClinicalConfig, ClinicalGroup
 
 from scripts.bio.clinical_thresholds_loader import get_locus_config
+from scripts.core.provenance import format_source
 
 def build_clinical_config(trid, thresholds_data=None):
     cc = ClinicalConfig()
@@ -18,6 +19,7 @@ def build_clinical_config(trid, thresholds_data=None):
     cc.repeat_mode = cfg_yaml.get("repeat_mode")
     cc.genotype_display = cfg_yaml.get("genotype_display")
     cc.orientation = cfg_yaml.get("orientation")
+    cc.source = format_source(cfg_yaml.get("source"))
 
     # 3) Motifs
     motif_props = cfg_yaml.get("motif_properties", {})

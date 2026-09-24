@@ -1,0 +1,4 @@
+# Dépendances de tgv_inputs_builder.py (préparation des archives et rapport QC)
+# Installation : pip install -r requirements-builder.txt
+json5==0.15.0
+matplotlib==3.11.2

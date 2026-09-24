@@ -27,6 +27,8 @@ TRANSLATIONS = {
         "Patient :": "Patient:",
         "ID Patient :": "Patient ID:",
         "Locus :": "Locus:",
+        "Fichiers :": "Files:",
+        "Génome hg38 en ligne (igv.org) : ce n'est pas la référence locale utilisée par TRGT.": "Online hg38 genome (igv.org): this is not the local reference used by TRGT.",
         "Non classifié": "Unclassified",
         "Non classé": "Unclassified",
         "Motif :": "Motif:",
@@ -341,11 +343,21 @@ def restart_application(current_window=None):
         cmd = [sys.executable] + sys.argv
         working_dir = BASE_DIR
 
-    # Sous Linux : lancement propre et détaché
+    # Lancement détaché, sans shell (pas d'interprétation des arguments)
     if sys.platform != "win32":
         subprocess.Popen(cmd, cwd=working_dir, start_new_session=True)
     else:
-        subprocess.Popen(cmd, cwd=working_dir, shell=True)
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(cmd, cwd=working_dir, creationflags=flags, close_fds=True)
+
+    # os._exit ne passe ni par finally ni par atexit : nettoyage explicite de la session
+    try:
+        from scripts.core.local_server import stop_server
+        from scripts.core import session_tmp
+        stop_server()
+        session_tmp.cleanup()
+    except Exception:
+        pass
 
     os._exit(0)
 

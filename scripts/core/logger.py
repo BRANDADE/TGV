@@ -4,7 +4,7 @@ import sys
 import tempfile
 from datetime import datetime
 
-__version__ = "1.0.0"
+from scripts.core.version import __version__, build_commit
 
 def setup_logging():
     """
@@ -64,7 +64,7 @@ def setup_logging():
     )
 
     logging.info("=========================================")
-    logging.info(f"Starting TRGT Global Viewer (TGV) v{__version__}")
+    logging.info(f"Starting TRGT Global Viewer (TGV) v{__version__} (commit {build_commit()})")
     logging.info(f"Python version: {sys.version.split()[0]}")
     logging.info(f"Platform: {sys.platform}")
     logging.info(f"Log file: {log_path_desc}")

@@ -4,7 +4,6 @@ make_report.py  Unified and clean HTML report for PacBio TRGT & TGV QC
 Command-line usage:
     python make_report.py <run_folder_or_zip_archive>
 """
-import os
 import argparse
 import base64
 import json
@@ -12,11 +11,12 @@ import sys
 import zipfile
 import io
 import csv
-import tempfile
 import webbrowser
 import logging
 from datetime import datetime
 from pathlib import Path
+
+from scripts.core.session_tmp import session_path
 
 try:
     import PySimpleGUI as sg
@@ -201,8 +201,8 @@ def df_to_html_table(table_data: dict, table_id: str) -> str:
     return (
         f'<table id="{table_id}">\n'
         f'<thead><tr>{headers}</tr></thead>\n'
-        f'<tbody>\n' + "\n".join(rows) + '\n</tbody>\n'
-        f'</table>'
+        '<tbody>\n' + "\n".join(rows) + '\n</tbody>\n'
+        '</table>'
     )
 
 
@@ -250,13 +250,6 @@ def generate_report_html_string(input_path: Path) -> str:
         + "\n"
     )
     metrics_tsv_json = json.dumps(metrics_tsv)
-
-    comment = data.get("_comment") or ""
-    pbcommand_version = "?"
-    if "version" in comment:
-        parts = comment.split("version")
-        if len(parts) > 1:
-            pbcommand_version = parts[1].strip().split()[0] or "?"
 
     interp_data = {}
     interp_file = reader.find_file_by_suffix("qc_interpretation.json")
@@ -1224,7 +1217,8 @@ def open_report_on_the_fly(input_path: Path):
         run_name = reader.get_run_name()
         reader.close()
 
-        tmp_path = os.path.join(tempfile.gettempdir(), f"tgv_report_{run_name}.html")
+        # Répertoire de session : supprimé à la fermeture de TGV
+        tmp_path = session_path("reports", f"tgv_report_{run_name}.html")
         logging.debug(f"Writing temporary standalone HTML report to: {tmp_path}")
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(html_content)

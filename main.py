@@ -1,10 +1,8 @@
 # main.py
 import sys
 import os
-import tempfile
-import glob
 import logging
-import scripts.core.i18n
+import scripts.core.i18n  # noqa: F401  (traductions et bouton de langue appliqués à PySimpleGUI)
 
 # Importation du configurateur de logs
 from scripts.core.logger import setup_logging
@@ -51,37 +49,21 @@ if sys.stderr is None:
 
 def cleanup_temp_files():
     """
-    Identifie et supprime les fichiers temporaires générés par l'application.
-    Les échecs sont consignés dans le log sans interrompre la fermeture.
+    Arrête le serveur local et supprime le répertoire temporaire de la session
+    (exports HTML, rapport QC, IGV, graphiques). Les échecs sont consignés sans
+    interrompre la fermeture.
     """
     logging.info("Starting cleanup of temporary files...")
-    temp_dir = tempfile.gettempdir()
-    
-    # 1. Suppression du fichier d'export de tableau (trgt_table.html)
-    table_path = os.path.join(temp_dir, "trgt_table.html")
-    if os.path.exists(table_path):
-        try:
-            os.remove(table_path)
-            logging.info(f"Temporary file removed: {table_path}")
-        except Exception as e:
-            logging.warning(f"Failed to remove temporary file {table_path}: {e}")
-            
-    # 2. Suppression de tous les rapports de run (trgt_report_*.html)
-    report_pattern = os.path.join(temp_dir, "trgt_report_*.html")
-    for p in glob.glob(report_pattern):
-        try:
-            os.remove(p)
-            logging.info(f"Temporary report removed: {p}")
-        except Exception as e:
-            logging.warning(f"Failed to remove temporary report {p}: {e}")
-            
-    # 3. Arrêt du serveur et suppression du dossier IGV
     try:
-        from scripts.ui.igv import cleanup_tmpdir_force
-        cleanup_tmpdir_force()
-        logging.info("IGV server and temporary environment cleaned up.")
+        from scripts.core.local_server import stop_server
+        stop_server()
     except Exception as e:
-        logging.warning(f"Failed to clean up IGV environment: {e}")
+        logging.warning(f"Failed to stop local server: {e}")
+    try:
+        from scripts.core import session_tmp
+        session_tmp.cleanup()
+    except Exception as e:
+        logging.warning(f"Failed to remove session temporary directory: {e}")
 
 
 def main():
@@ -92,7 +74,7 @@ def main():
         logging.info("Launching main graphical user interface...")
         run_main_window()
         logging.info("Application closed normally.")
-    except Exception as e:
+    except Exception:
         # Enregistrement du crash complet dans l'unique fichier de log de l'application
         logging.critical("A critical error occurred during execution:", exc_info=True)
         sys.exit(1)
