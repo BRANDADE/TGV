@@ -35,7 +35,6 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
     thead_html = (
         "<tr><th class='col-checkbox'></th>"
         + "".join(f"<th>{tr(h)}</th>" for h in headers)
-        + f"<th class='col-actions'>{tr('Actions')}</th>"
         + "</tr>"
     )
 
@@ -78,8 +77,6 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
                 class_attr = f" class='{' '.join(classes)}'" if classes else ""
                 row_html += f"<td{class_attr}>{tr(str(val))}</td>"
 
-        swap_title = tr("Inverser Allèle 1 / Allèle 2")
-        row_html += f'<td class="col-actions"><button type="button" class="btn-swap" onclick="swapRowAlleles(this)" title="{swap_title}">⇅</button></td>'
         row_html += "</tr>"
         tbody_rows.append(row_html)
     tbody_html = "".join(tbody_rows)
@@ -250,24 +247,6 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
 
   .col-checkbox {{ width: 45px; text-align: center; padding: 8px; }}
   .row-checkbox {{ transform: scale(1.15); cursor: pointer; accent-color: var(--accent); }}
-  .col-actions {{ width: 80px; text-align: center; padding: 8px; }}
-  .btn-swap {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--accent2);
-    border-radius: 4px;
-    cursor: pointer;
-    padding: 4px 10px;
-    font-size: 13px;
-    font-weight: bold;
-    transition: all 0.15s;
-  }}
-  .btn-swap:hover {{
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-    transform: scale(1.08);
-  }}
 
   .btn-container {{
     margin-top: 20px;
@@ -364,98 +343,6 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
     document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = checked);
   }}
 
-  // Inverse les valeurs composées (ex: "40/2", "38 / 2", "40 (38/2)", "Sain / Pathogène")
-  function swapCompositeValue(str) {{
-    str = str.trim();
-    if (!str || str.startsWith('http')) return str;
-
-    // Format avec parenthèses : ex "40 (38/2)" ou "40 (38 / 2)"
-    const matchParen = str.match(/^(.*?\\()([^/]+)\\/([^)]+)(\\).*)$/);
-    if (matchParen) {{
-      return matchParen[1] + matchParen[3].trim() + '/' + matchParen[2].trim() + matchParen[4];
-    }}
-
-    // Format avec espace "A / B"
-    if (str.includes(' / ')) {{
-      const parts = str.split(' / ');
-      if (parts.length === 2) {{
-        return parts[1].trim() + ' / ' + parts[0].trim();
-      }}
-    }}
-
-    // Format direct avec slash "A/B" ou "40/2"
-    if (str.includes('/')) {{
-      const parts = str.split('/');
-      if (parts.length === 2) {{
-        return parts[1].trim() + '/' + parts[0].trim();
-      }}
-    }}
-
-    return str;
-  }}
-
-  function swapRowAlleles(button) {{
-    const row = button.closest('tr');
-    if (!row) return;
-    const table = row.closest('table');
-    if (!table) return;
-
-    const thElements = Array.from(table.querySelectorAll('thead th'));
-    const headers = thElements.map(th => th.innerText.trim());
-    const cells = Array.from(row.querySelectorAll('td'));
-    const pairedIndices = new Set();
-
-    // 1. Inversion des colonnes distinctes Allèle 1 <-> Allèle 2
-    for (let i = 0; i < headers.length; i++) {{
-      const h1 = headers[i];
-      if (!h1) continue;
-      const lower = h1.toLowerCase();
-      let targetLower = null;
-
-      if (lower.includes('allèle 1')) {{
-        targetLower = lower.replace('allèle 1', 'allèle 2');
-      }} else if (lower.includes('allele 1')) {{
-        targetLower = lower.replace('allele 1', 'allele 2');
-      }} else if (lower.includes('a1')) {{
-        targetLower = lower.replace('a1', 'a2');
-      }}
-
-      if (targetLower) {{
-        const j = headers.findIndex(h => h.toLowerCase() === targetLower);
-        if (j !== -1 && j !== i && !pairedIndices.has(i) && !pairedIndices.has(j)) {{
-          pairedIndices.add(i);
-          pairedIndices.add(j);
-          if (cells[i] && cells[j]) {{
-            const tempHTML = cells[i].innerHTML;
-            cells[i].innerHTML = cells[j].innerHTML;
-            cells[j].innerHTML = tempHTML;
-
-            const tempClass = cells[i].className;
-            cells[i].className = cells[j].className;
-            cells[j].className = tempClass;
-          }}
-        }}
-      }}
-    }}
-
-    // 2. Inversion des colonnes combinées (Profondeur/Depth, Génotype, Classification, etc.)
-    for (let k = 0; k < headers.length; k++) {{
-      if (pairedIndices.has(k) || !cells[k]) continue;
-      const hLow = headers[k].toLowerCase();
-
-      // Ignorer les colonnes de sélection, d'actions, de commentaires et de Locus
-      if (hLow === '' || hLow.includes('action') || hLow.includes('comment') || hLow.includes('locus')) {{
-        continue;
-      }}
-
-      const currentHTML = cells[k].innerHTML.trim();
-      const swappedHTML = swapCompositeValue(currentHTML);
-      if (swappedHTML !== currentHTML) {{
-        cells[k].innerHTML = swappedHTML;
-      }}
-    }}
-  }}
-
   async function copySelectedRows() {{
     const runId = "{run_id}";
     const sampleName = "{sample_name}";
@@ -467,7 +354,7 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
       const checkbox = row.querySelector('.row-checkbox');
       if (checkbox && checkbox.checked) {{
         hasSelected = true;
-        const cells = Array.from(row.querySelectorAll('td')).slice(1, -1).map(td => {{
+        const cells = Array.from(row.querySelectorAll('td')).slice(1).map(td => {{
           const tempTd = td.cloneNode(true);
           tempTd.classList.remove('modified-cell');
           const commentInput = tempTd.querySelector('.comment-input');

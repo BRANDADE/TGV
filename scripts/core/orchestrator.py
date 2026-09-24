@@ -7,12 +7,16 @@ from scripts.models.display import DisplayRow, DisplayDetails, DisplayExport, Di
 
 
 from scripts.core.result_builder import fill_raw_base, fill_clinical_base
+from scripts.core.clinical_compute import genotype_value
 from scripts.core.marking import mark_pathogenic_motifs, mark_pathogenic_segments, mark_pathogenic_repetition, mark_pathogenic_genotype
 from scripts.core.rows import build_row_simple, build_row_clinical
 
 from scripts.bio.motif_structure import decompose_repetition_without_interruptions, decompose_repetition_with_interruptions
 from scripts.bio.clinical_classifier import clinical_group
-from scripts.bio.labels import ABSENT, ABSENT_DISPLAY, UNCLASSIFIED, NOTE_MOTIF_DISCORDANCE, label_score
+from scripts.bio.labels import CALLED, NO_CALL, ABSENT, ABSENT_DISPLAY, UNCLASSIFIED, NOTE_MOTIF_DISCORDANCE, label_score
+
+# Allèles appelés d'abord, puis non appelés, puis absents (locus haploïde)
+_STATUS_RANK = {CALLED: 0, NO_CALL: 1, ABSENT: 2}
 
 
 def to_int(value):
@@ -36,6 +40,34 @@ def depth_display(raw, status, threshold):
     return shown, f"{value}"
 
 
+def allele_sort_key(allele, clinical_cfg, min_label):
+    """
+    Clé de tri des allèles : (statut, génotype clinique affiché, AL).
+    Locus sans configuration clinique (ou allèle sans génotype clinique) : AL seul.
+    """
+    inf = float("inf")
+    clinical_value = inf
+    if clinical_cfg is not None and allele.clinical is not None:
+        clinical_value, _ = genotype_value(
+            allele.clinical, clinical_cfg.genotype_display, clinical_cfg.pure_only, min_label
+        )
+    size = to_int(allele.size)
+    return (_STATUS_RANK.get(allele.status, 3), clinical_value, size if size is not None else inf)
+
+
+def order_alleles(sample, clinical_cfg, min_label):
+    """
+    Ordonne les allèles d'un sample : allèle 1 = plus petit génotype clinique affiché.
+    Tri stable : à égalité, l'ordre TRGT est conservé. Les objets Allele entiers
+    sont échangés (profondeur, pureté, méthylation et séquence suivent).
+    """
+    ordered = sorted(
+        [sample.allele1, sample.allele2],
+        key=lambda a: allele_sort_key(a, clinical_cfg, min_label),
+    )
+    sample.allele1, sample.allele2 = ordered
+
+
 def raw_display(raw, status):
     """Valeur brute affichée pour un allèle ('-' si absent, '.' si manquante)."""
     if status == ABSENT:
@@ -52,6 +84,8 @@ def process_result(analysis_input):
         if sample.result:
             continue
 
+        # Ordre d'affichage des allèles fixé une fois pour toutes (UI, exports, IGV)
+        order_alleles(sample, trid_global.clinical, min_label)
         a1 = sample.allele1
         a2 = sample.allele2
 
