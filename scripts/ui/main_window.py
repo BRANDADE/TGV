@@ -748,7 +748,14 @@ def run_main_window():
                 logging.debug(f"    Param path -> {path_key}: {path_val}")
             
             logging.info("Executing clinical classification algorithms...")
-            process_clinical(analysis_input)
+            discordances = process_clinical(analysis_input)
+            if discordances:
+                sg.popup_error(
+                    "Discordance entre les motifs TRGT (BED) et les seuils cliniques définis dans "
+                    "clinical_thresholds.yaml pour les locus suivants :\n\n"
+                    + "\n".join(f" - {trid}" for trid in discordances),
+                    title="Discordance clinique détectée",
+                )
 
             logging.info("Formatting analytical results...")
             process_result(analysis_input)

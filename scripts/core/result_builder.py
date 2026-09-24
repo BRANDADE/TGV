@@ -1,5 +1,16 @@
 from scripts.core.clinical_compute import build_genotype_clinical, build_repetition_clinical
 from scripts.core.sequence_utils import format_interruptions, clean_and_sort_rep_string
+from scripts.bio.labels import NO_CALL, ABSENT, ABSENT_DISPLAY
+
+
+def status_token(allele):
+    """Valeur affichée à la place du génotype / de la classification d'un allèle non appelé."""
+    if allele.status == NO_CALL:
+        return NO_CALL
+    if allele.status == ABSENT:
+        return ABSENT_DISPLAY
+    return None
+
 
 def fill_raw_base(result, trid_id, trid, a1, a2):
     """
@@ -28,6 +39,7 @@ def fill_raw_base(result, trid_id, trid, a1, a2):
     # ---------------------------------------------------------
     # --- Allèle 1 ---
     # ---------------------------------------------------------
+    result.status1 = a1.status
     result.depth1_raw = a1.depth
     result.size1_raw = a1.size
     result.range_size1_raw = a1.size_range
@@ -43,11 +55,13 @@ def fill_raw_base(result, trid_id, trid, a1, a2):
     result.seg1_raw = a1.sequence.segmentation_complete
     result.inter1_raw = format_interruptions(a1.sequence.interruptions)
 
-    result.classification1_raw = a1.clinical.clinical if a1.clinical else None
+    result.classification1_raw = a1.clinical.clinical if a1.clinical else status_token(a1)
+    result.genotype1_raw = status_token(a1)
 
     # ---------------------------------------------------------
     # --- Allèle 2 ---
     # ---------------------------------------------------------
+    result.status2 = a2.status
     result.depth2_raw = a2.depth
     result.size2_raw = a2.size
     result.range_size2_raw = a2.size_range
@@ -62,7 +76,8 @@ def fill_raw_base(result, trid_id, trid, a1, a2):
     result.seg2_raw = a2.sequence.segmentation_complete
     result.inter2_raw = format_interruptions(a2.sequence.interruptions)
 
-    result.classification2_raw = a2.clinical.clinical if a2.clinical else None
+    result.classification2_raw = a2.clinical.clinical if a2.clinical else status_token(a2)
+    result.genotype2_raw = status_token(a2)
 
 
 

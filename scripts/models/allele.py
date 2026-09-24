@@ -1,10 +1,16 @@
+from scripts.bio.labels import CALLED
+
+
 class Allele:
     """
     Représente un allèle TRGT + ses données dérivées.
     """
     def __init__(self, size, size_range, depth,
                  purity, methylation,
-                 sequence):
+                 sequence, status=CALLED):
+
+        # Statut d'appel : called / no_call / absent (scripts/bio/labels.py)
+        self.status = status
 
         # Données TRGT brutes
         self.size = size
@@ -23,9 +29,14 @@ class Allele:
         self.clinical_motifs = None
         self.clinical = None
 
+    @property
+    def is_called(self):
+        return self.status == CALLED
+
     def __repr__(self):
         return (
-            f"Allele(size={self.size}, "
+            f"Allele(status={self.status}, "
+            f"size={self.size}, "
             f"range={self.size_range}, "
             f"depth={self.depth}, "
             f"purity={self.purity}, "

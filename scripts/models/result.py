@@ -27,6 +27,7 @@ class Result:
         self.motifs_used2 = None
 
         # --- Allèle 1 ---
+        self.status1 = None
         self.depth1_raw = None
         self.size1_raw = None
         self.range_size1_raw = None
@@ -45,6 +46,7 @@ class Result:
         self.classification1_bio = None
 
         # --- Allèle 2 ---
+        self.status2 = None
         self.depth2_raw = None
         self.size2_raw = None
         self.range_size2_raw = None

@@ -117,7 +117,11 @@ def parse_motif_counts(m: str):
 def parse_segmentation(seg: str):
     """
     Transforme 'CAG(2-5)_T_CAG(6-9)_CAT' en liste (motif, start, end).
+    Une segmentation vide (MS='.' dans le VCF) donne une liste vide.
     """
+    if not seg:
+        return []
+
     parts = seg.split("_")
     segments = []
     current_pos = None

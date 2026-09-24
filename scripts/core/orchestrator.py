@@ -12,6 +12,35 @@ from scripts.core.rows import build_row_simple, build_row_clinical
 
 from scripts.bio.motif_structure import decompose_repetition_without_interruptions, decompose_repetition_with_interruptions
 from scripts.bio.clinical_classifier import clinical_group
+from scripts.bio.labels import ABSENT, ABSENT_DISPLAY
+
+
+def to_int(value):
+    """Entier ou None (valeur VCF manquante / vide)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def depth_display(raw, status, threshold):
+    """Profondeur affichée (avec ⚠ si sous le seuil) et profondeur brute exportée."""
+    if status == ABSENT:
+        return ABSENT_DISPLAY, ABSENT_DISPLAY
+    value = to_int(raw)
+    if value is None:
+        return ".", "."
+    shown = f"{value}"
+    if threshold is not None and value < threshold:
+        shown = f"\U000026A0 {value}"
+    return shown, f"{value}"
+
+
+def raw_display(raw, status):
+    """Valeur brute affichée pour un allèle ('-' si absent, '.' si manquante)."""
+    if status == ABSENT:
+        return ABSENT_DISPLAY
+    return raw if raw not in (None, "") else "."
 
 
 def process_result(analysis_input):
@@ -92,9 +121,10 @@ def process_clinical(analysis_input):
     Affiche la décomposition TRGT pour chaque TRID sélectionné
     et pour chaque allèle du sample.
     Remplit allele.trgt_groups[group_id] avec un TRGTGroupData structuré.
-    """
-    import PySimpleGUI as sg
 
+    Retourne la liste triée des TRID en discordance BED ↔ clinique
+    (affichage à la charge de l'appelant : popup dans l'interface, log en CLI).
+    """
     label_priority = analysis_input.label_priority
     max_score = max(label_priority.values())
 
@@ -105,7 +135,7 @@ def process_clinical(analysis_input):
 
     for trid_id, trid_global, sample in analysis_input.iter_items():
 
-        if sample.allele1.clinical:
+        if sample.clinical_done:
             logging.debug(f"Clinical classification already computed for locus '{trid_id}'. Skipping recalculation.")
             continue
 
@@ -119,8 +149,14 @@ def process_clinical(analysis_input):
         motif_groups = clinical_cfg.groups
 
         alleles = [sample.allele1, sample.allele2]
+        sample.clinical_done = True
 
         for idx, allele in enumerate(alleles, start=1):
+
+            # Allèle non appelé (no-call) ou absent (locus haploïde) : rien à classer
+            if not allele.is_called:
+                logging.debug(f"Allele {idx} of locus '{trid_id}' is '{allele.status}'. No classification.")
+                continue
 
             logging.debug(f"Processing allele {idx} for locus '{trid_id}':")
             logging.debug(f"  Repetitions: {allele.sequence.repetitions}")
@@ -204,17 +240,11 @@ def process_clinical(analysis_input):
             allele.clinical = allele.trgt_groups[best_group]
             allele.clinical_motifs = motif_groups[best_group].motifs
 
-    # --- POPUP UNIQUE POUR TOUTES LES DISCORDANCES ---
+    discordances = sorted(set(discordances))
     if discordances:
-        logging.warning(f"Clinical/genomic discordances resolved for loci: {list(set(discordances))}")
-        message = (
-            "Discordance entre les motifs TRGT (BED) et les seuils cliniques définis dans "
-            "clinical_thresholds.yaml pour les locus suivants :\n\n"
-            + "\n".join(f" - {trid}" for trid in set(discordances))
-        )
-        sg.popup_error(message, title="Discordance clinique détectée")
+        logging.warning(f"Clinical/genomic discordances resolved for loci: {discordances}")
 
-    return None
+    return discordances
 
 
 def process_display(result, clinical_cfg, low_depth_threshold):
@@ -250,23 +280,21 @@ def process_display(result, clinical_cfg, low_depth_threshold):
     result.display_html.locus = result.locus
 
     # --- Profondeur ---
-    depth1 = int(result.depth1_raw)
-    depth2 = int(result.depth2_raw)
-    result.display_export.depth1 = f"{depth1}"
-    result.display_export.depth2 = f"{depth2}"
-    if valid_threshold is not None:
-        if (int(result.depth1_raw) < low_depth_threshold):
-            depth1 = f"\U000026A0 {depth1}"
-        if (int(result.depth2_raw) < low_depth_threshold):
-            depth2 = f"\U000026A0 {depth2}"
+    depth1, result.display_export.depth1 = depth_display(result.depth1_raw, result.status1, valid_threshold)
+    depth2, result.display_export.depth2 = depth_display(result.depth2_raw, result.status2, valid_threshold)
     result.display_row.depth = f"{depth1} / {depth2}"
     result.display_details.depth = f"{depth1} / {depth2}"
     result.display_html.depth = f"{depth1} / {depth2}"
 
     # --- Taille ---
-    size = f"{result.size1_raw} / {result.size2_raw}"
+    size1 = raw_display(result.size1_raw, result.status1)
+    size2 = raw_display(result.size2_raw, result.status2)
+    size = f"{size1} / {size2}"
     result.display_row.size = size
-    size_extended = f"{result.size1_raw} ({result.range_size1_raw}) / {result.size2_raw} ({result.range_size2_raw})"
+    size_extended = (
+        f"{size1} ({raw_display(result.range_size1_raw, result.status1)}) / "
+        f"{size2} ({raw_display(result.range_size2_raw, result.status2)})"
+    )
     result.display_details.size = size_extended
 
     # --- Motifs TRGT ---

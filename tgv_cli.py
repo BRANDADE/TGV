@@ -345,7 +345,9 @@ def export_run(zip_path, trgt_version, bed_version, run_id, out_tsv, all_loci=Fa
         )
 
         # Run clinical evaluation and format results
-        process_clinical(analysis_input)
+        discordances = process_clinical(analysis_input)
+        if discordances:
+            logging.warning(f"Motif discordances (BED vs clinical YAML) for {sample_name}: {discordances}")
         process_result(analysis_input)
 
         # Structure results into TSV format
