@@ -6,18 +6,16 @@ import re
 import logging
 
 from scripts.models.run import Run
-from scripts.models.dto import AnalysisInput
 
 from scripts.core.vcf_loader import list_vcfs
 from scripts.core.vcf_parser import parse_vcf_for_sample
 from scripts.core.utils import get_analysis_prefix
 from scripts.core.artifact_lookup import sample_id_from_vcf_name
 from scripts.core.config_manager import get_safe_config_path
-from scripts.core.orchestrator import process_clinical, process_result, process_display
 
 from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds, load_trid_aliases
 from scripts.bio.clinical_config_validator import validate_thresholds
-from scripts.core.analysis import build_run_trids, resolve_panel
+from scripts.core.analysis import build_run_trids, resolve_panel, run_analysis
 
 from scripts.ui.results_window import show_results_window
 from scripts.ui.igv import is_online, get_asset_path
@@ -248,6 +246,18 @@ def run_main_window():
                 continue
 
             logging.info(f"Loading main TRGT ZIP archive: {zip_path}")
+
+            # Nouveau run : rien de l'ancien run ne doit subsister (sélection de loci,
+            # patient, allèles parsés)
+            window.metadata.pop("run", None)
+            window.metadata["current_trids"] = {}
+            window.metadata["current_sample"] = None
+            window.metadata["selected_trids"] = []
+            window.metadata["all_samples"] = []
+            window["-SAMPLE-"].update(values=[], value="")
+            update_trid_selected(window)
+            window["-STATUS-"].update("")
+
             vcfs = list_vcfs(zip_path)
             if not vcfs:
                 logging.error(f"Selected ZIP archive contains no .trgt.vcf files: {zip_path}")
@@ -442,7 +452,9 @@ def run_main_window():
                 logging.warning("User triggered patient selection but no sample name was found")
                 continue
 
-            run = window.metadata["run"]
+            run = window.metadata.get("run")
+            if not run:
+                continue
 
             # Parser le VCF → retourne { trid_id : Sample }
             sample_trids = parse_vcf_for_sample(
@@ -458,6 +470,7 @@ def run_main_window():
 
             # Stockage UI
             window.metadata["current_trids"] = sample_trids
+            window.metadata["current_sample"] = sample_name
 
             # Mise à jour TRID lisibles
             readable_map = window.metadata["readable_to_trid"]
@@ -597,49 +610,33 @@ def run_main_window():
                 window["-STATUS-"].update("Veuillez sélectionner au moins un locus", text_color="red")
                 continue
 
-            # TRIDs globaux sélectionnés
-            trids_global = {
-                trid_id: run.trids[trid_id]
-                for trid_id in selected_trids
-                if trid_id in run.trids
+            # Seuls les loci présents chez ce patient sont analysés ; les autres sont signalés.
+            # Les allèles doivent être ceux du patient affiché (re-parsing si besoin).
+            if window.metadata.get("current_sample") != sample_name:
+                window.metadata["current_trids"] = parse_vcf_for_sample(run.vcf_zip, sample_name, run.trids)
+                window.metadata["current_sample"] = sample_name
+            sample_trids = window.metadata["current_trids"]
+            paths = {
+                "vcf": run.vcf_zip,
+                "repeat_reads": run.repeat_reads_zip,
+                "spanning_bam": run.spanning_bam_zip,
+                "motifs_allele": run.motifs_allele_zip,
+                "motifs_waterfall": run.motifs_waterfall_zip,
+                "meth_allele": run.meth_allele_zip,
+                "meth_waterfall": run.meth_waterfall_zip,
+                "genome_fasta": fasta_path,
             }
 
-            # Samples associés à ces TRIDs
-            samples = {
-                trid_id: run.trids[trid_id].samples.get(sample_name)
-                for trid_id in selected_trids
-                if trid_id in run.trids
-            }
+            logging.info(f"Initiating clinical analysis for patient: '{sample_name}' - Loci selected: {len(selected_trids)}")
+            for path_key, path_val in paths.items():
+                logging.debug(f"    Param path -> {path_key}: {path_val}")
 
-            analysis_input = AnalysisInput(
-                sample_name=sample_name,
-                trids=trids_global,
-                samples=samples,
-                ordered_trids=selected_trids,
-                paths={
-                    "vcf": run.vcf_zip,
-                    "repeat_reads": run.repeat_reads_zip,
-                    "spanning_bam": run.spanning_bam_zip,
-                    "motifs_allele": run.motifs_allele_zip,
-                    "motifs_waterfall": run.motifs_waterfall_zip,
-                    "meth_allele": run.meth_allele_zip,
-                    "meth_waterfall": run.meth_waterfall_zip,
-                    "genome_fasta" : fasta_path
-                },
-                label_priority=window.metadata["label_priority"]
+            label_priority = window.metadata["label_priority"]
+            results, discordances, missing = run_analysis(
+                sample_name, sample_trids, run.trids, selected_trids,
+                label_priority, low_depth_threshold, paths=paths,
             )
 
-            # Logs de lancement de l'analyse et suivi du génome de référence
-            logging.info(f"Initiating clinical analysis for patient: '{sample_name}' - Loci selected: {len(selected_trids)}")     
-
-            # --- DEBUG ---
-            logging.debug(f"AnalysisInput structure created for sample '{analysis_input.sample_name}':")
-            logging.debug(f"    Selected loci list: {analysis_input.ordered_trids}")
-            for path_key, path_val in analysis_input.paths.items():
-                logging.debug(f"    Param path -> {path_key}: {path_val}")
-            
-            logging.info("Executing clinical classification algorithms...")
-            discordances = process_clinical(analysis_input)
             if discordances:
                 sg.popup_error(
                     "Discordance entre les motifs TRGT (BED) et les seuils cliniques définis dans "
@@ -648,24 +645,19 @@ def run_main_window():
                     title="Discordance clinique détectée",
                 )
 
-            logging.info("Formatting analytical results...")
-            process_result(analysis_input)
+            if missing:
+                trid_to_readable = {v: k for k, v in window.metadata["readable_to_trid"].items()}
+                missing_readable = [trid_to_readable.get(t, t) for t in missing]
+                logging.warning(f"Loci absent from the VCF of '{sample_name}': {missing}")
+                window["-STATUS-"].update(
+                    "Absents du VCF du patient : " + ", ".join(missing_readable), text_color="red"
+                )
+            else:
+                window["-STATUS-"].update("")
 
-            results = []   # liste de Result
+            if not results:
+                continue
 
-            for trid_id, sample in analysis_input.samples.items():
-                if not sample or not sample.result:
-                    logging.warning(f"Locus '{trid_id}' was requested but no valid sample data or classification result was found.")
-                    continue
-
-                clinical_cfg = analysis_input.trids[trid_id].clinical
-
-                # Construit display_row / display_details / display_export / display_html
-                process_display(sample.result, clinical_cfg, low_depth_threshold)
-
-                # On stocke l'objet Result complet
-                results.append(sample.result)
-                
             # Appelle l'UI avec la liste de Result
             logging.info(f"Analysis completed. Successfully processed {len(results)}/{len(selected_trids)} loci.")
             logging.info(f"Opening results visualization window for patient: '{sample_name}'")
@@ -675,8 +667,8 @@ def run_main_window():
             show_results_window(
                 sample_name=sample_id_from_vcf_name(sample_name),
                 results=results,
-                label_priority=analysis_input.label_priority,
-                paths=analysis_input.paths,
+                label_priority=label_priority,
+                paths=paths,
                 online_status=online_status,
                 low_depth_threshold=low_depth_threshold,
                 run_id=run_id
