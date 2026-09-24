@@ -1,16 +1,32 @@
 name: Build Windows EXE
 
-# Déclenchement uniquement manuel (workflow_dispatch)
+# - Publication d'une release : TGV.exe est construit à partir du tag et attaché à la release.
+# - Lancement manuel : construit la branche choisie (artefact TGV-exe) ; si un tag est
+#   indiqué, construit ce tag et attache TGV.exe à la release correspondante.
 on:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de la release à laquelle attacher TGV.exe (vide : artefact seulement)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        ref: ${{ env.RELEASE_TAG || github.ref }}
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -23,12 +39,27 @@ jobs:
         pip install pyinstaller
         pip install -r requirements.txt
 
-    # Commit exact embarqué dans l'exécutable (traçabilité : scripts/core/version.py)
+    # Version (déduite du tag, ex. TGV.v1.1.0 → 1.1.0) et commit exact embarqués dans
+    # l'exécutable (traçabilité : scripts/core/version.py)
     - name: Write build info
       shell: bash
       run: |
-        echo "COMMIT = \"${GITHUB_SHA::12}\"" > scripts/_build_info.py
+        COMMIT=$(git rev-parse --short=12 HEAD)
+        VERSION=""
+        if [ -n "$RELEASE_TAG" ]; then
+          VERSION="${RELEASE_TAG##*v}"
+          [[ "$VERSION" =~ ^[0-9] ]] || VERSION="$RELEASE_TAG"
+        fi
+        {
+          echo "COMMIT = \"$COMMIT\""
+          if [ -n "$VERSION" ]; then echo "VERSION = \"$VERSION\""; fi
+        } > scripts/_build_info.py
+        # Les tags antérieurs à la lecture de VERSION dans _build_info : version inscrite directement
+        if [ -n "$VERSION" ]; then
+          sed -i "s/^__version__ = .*/__version__ = \"$VERSION\"/" scripts/core/version.py
+        fi
         cat scripts/_build_info.py
+        grep -n "^__version__" scripts/core/version.py
 
     - name: Build EXE
       run: |
@@ -45,3 +76,10 @@ jobs:
         name: TGV-exe
         path: dist/TGV.exe
         compression-level: 0
+
+    - name: Attach TGV.exe to the release
+      if: env.RELEASE_TAG != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload "$RELEASE_TAG" dist/TGV.exe --clobber --repo "$GITHUB_REPOSITORY"

@@ -36,7 +36,7 @@ L'outil **TGV** s'adapte à votre environnement via deux modes d'exécution :
 
 #### Option A : Sous Windows (Exécutable autonome)
 Destiné aux cliniciens et biologistes sur poste de travail Windows.
-1. Récupérez l'exécutable autonome **`TGV.exe`** produit par le workflow GitHub Actions *Build Windows EXE* (onglet *Actions*, artefact `TGV-exe`). Aucune release n'est publiée à ce jour.
+1. Téléchargez l'exécutable autonome **`TGV.exe`** depuis l'onglet *Releases* de ce dépôt. Il est construit et attaché automatiquement à chaque release par le workflow *Build Windows EXE*, avec la version (issue du tag) et le commit exact.
 2. Double-cliquez sur l'exécutable pour lancer l'application.
 *Aucune installation de Python ou de bibliothèque n'est requise.*
 
@@ -194,7 +194,7 @@ Les tests (VCF synthétiques au format TRGT 5.x) couvrent le parsing, la classif
 
 #### Option A: Windows (Standalone executable)
 Aimed at clinicians and biologists on Windows workstations.
-1. Get the standalone **`TGV.exe`** from the *Build Windows EXE* GitHub Actions workflow (artifact `TGV-exe`); no release has been published yet.
+1. Download the standalone **`TGV.exe`** from the *Releases* tab (built and attached automatically to each release by the *Build Windows EXE* workflow, with the tag version and exact commit).
 2. Double-click to launch.
 
 #### Option B: Linux / macOS (Command-line usage)

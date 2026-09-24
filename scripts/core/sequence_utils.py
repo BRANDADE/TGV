@@ -15,53 +15,26 @@ def reverse_complement(seq):
     return "".join(complement.get(base, "N") for base in reversed(seq))
 
 
-def rc_segmentation(seq, motifs_str):
+def reverse_complement_segmentation(ms, length):
     """
-    Recalcule complètement la segmentation MS sur la séquence RC.
-    Les index TRGT sont conservés car l'ordre des motifs ne change pas.
+    Reverse-complémente une segmentation MS de TRGT pour un allèle de longueur donnée.
+
+    Chaque segment 'idx(start-end)' du brin + devient 'idx(length-end - length-start)'
+    sur la séquence reverse-complémentée, et l'ordre des segments est inversé.
+    L'index de motif est conservé : il désigne le reverse-complément du motif du
+    catalogue. La segmentation de TRGT (et sa cohérence avec MC) est ainsi préservée
+    à l'identique ; elle n'est jamais recalculée sur la séquence RC.
     """
-    if not seq or not motifs_str:
-        return ""
-
-    motifs = motifs_str.split(",")
-
-    # Tri par longueur décroissante pour matcher correctement
-    motifs_sorted = sorted(
-        [(m, motifs.index(m)) for m in motifs],
-        key=lambda x: len(x[0]),
-        reverse=True
-    )
-
-    ms = []
-    i = 0
-    n = len(seq)
-
-    while i < n:
-        matched = False
-
-        for motif, trgt_idx in motifs_sorted:
-            m = len(motif)
-
-            if seq.startswith(motif, i):
-                start = i
-                i += m
-
-                # Regroupe les répétitions consécutives du même motif
-                while i < n and seq.startswith(motif, i):
-                    i += m
-
-                end = i
-                ms.append((trgt_idx, start, end))
-                matched = True
-                break
-
-        if not matched:
-            i += 1
-
     if not ms:
         return ""
 
-    return "_".join(f"{idx}({start}-{end})" for idx, start, end in ms)
+    segments = []
+    for block in ms.split("_"):
+        idx, coords = block.split("(")
+        start, end = map(int, coords[:-1].split("-"))
+        segments.append(f"{idx}({length - end}-{length - start})")
+
+    return "_".join(reversed(segments))
 
 
 def convert_mc(motifs, mc):
