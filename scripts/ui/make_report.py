@@ -12,11 +12,12 @@ import sys
 import zipfile
 import io
 import csv
-import tempfile
 import webbrowser
 import logging
 from datetime import datetime
 from pathlib import Path
+
+from scripts.core.session_tmp import session_path
 
 try:
     import PySimpleGUI as sg
@@ -1224,7 +1225,8 @@ def open_report_on_the_fly(input_path: Path):
         run_name = reader.get_run_name()
         reader.close()
 
-        tmp_path = os.path.join(tempfile.gettempdir(), f"tgv_report_{run_name}.html")
+        # Répertoire de session : supprimé à la fermeture de TGV
+        tmp_path = session_path("reports", f"tgv_report_{run_name}.html")
         logging.debug(f"Writing temporary standalone HTML report to: {tmp_path}")
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(html_content)

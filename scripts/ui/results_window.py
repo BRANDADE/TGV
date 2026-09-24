@@ -1,12 +1,10 @@
 import PySimpleGUI as sg
 import os
 import re
-import shutil
-import tempfile
 import logging
 
 from scripts.core.config_manager import load_ui_settings, save_ui_settings
-from scripts.core.plots import open_svg
+from scripts.core.plots import open_svg, forget_plots
 from scripts.core.artifact_lookup import (
     AmbiguousArtifactError, find_plot, get_mapped_bam, get_spanning_bam,
 )
@@ -310,10 +308,11 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                 logging.warning(f"Error saving UI geometry settings: {e}")
 
             # -----------------------------------------------------
-            # Cleanup des SVG temporaires
-            tmp_dir = os.path.join(tempfile.gettempdir(), ".tmp_plots", sample_name)
-            if os.path.isdir(tmp_dir):
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            # Cleanup des SVG temporaires du patient
+            try:
+                forget_plots(sample_name)
+            except Exception as e:
+                logging.debug(f"Plot cleanup skipped: {e}")
 
             window.close()
             return
@@ -534,7 +533,7 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
                 run_id=run_id,
                 low_depth_threshold=low_depth_threshold,
             )
-            save_and_open_html(html)
+            save_and_open_html(html, name=f"tgv_export_{sample_name}")
 
         if ev == "-GT_VALIDATE-":
             if not vals["-TABLE-"]:

@@ -1,33 +1,30 @@
 import os
 import sys
 import zipfile
-import tempfile
 import shutil
 import webbrowser
-import threading
-import http.server
-import socketserver
 import re
 import json
 import socket
 import logging
-import urllib.parse
 import PySimpleGUI as sg
 from scripts.core.i18n import tr
+from scripts.core.local_server import get_server
+from scripts.core.session_tmp import session_path
 
 PADDING = 75
-CURRENT_TMPDIR = None
-CURRENT_SERVER = None
-CURRENT_GENOME_DIR = None
+
+# Préfixe des fichiers IGV dans la liste blanche du serveur local
+IGV_PREFIX = "igv/"
 
 
 def is_online():
+    """Test de connexion vers le serveur des génomes igv.org (sans modifier le délai global des sockets)."""
     logging.debug("Probing active internet connection...")
     try:
-        socket.setdefaulttimeout(1.5)
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("s3.amazonaws.com", 443))
-        return True
-    except socket.error:
+        with socket.create_connection(("s3.amazonaws.com", 443), timeout=1.5):
+            return True
+    except OSError:
         return False
 
 
@@ -42,113 +39,15 @@ def get_val(obj, attr_name, default="N/A"):
     return str(val)
 
 
-class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def send_head(self):
-        path = self.translate_path(self.path)
-        if not os.path.exists(path) or os.path.isdir(path):
-            return super().send_head()
-            
-        ctype = self.guess_type(path)
-        try:
-            f = open(path, 'rb')
-        except OSError:
-            self.send_error(404, "File not found")
-            return None
-            
-        fs = os.fstat(f.fileno())
-        file_size = fs[6]
-        
-        range_header = self.headers.get('Range')
-        if range_header:
-            match = re.match(r'bytes=(\d*)-(\d*)', range_header)
-            if match:
-                start, end = match.groups()
-                start = int(start) if start else 0
-                end = int(end) if end else file_size - 1
-                end = min(end, file_size - 1)
-                
-                if start >= file_size or start > end:
-                    self.send_error(416, "Requested range not satisfiable")
-                    f.close()
-                    return None
-                    
-                self.send_response(206)
-                self.send_header('Content-Type', ctype)
-                self.send_header('Accept-Ranges', 'bytes')
-                self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
-                self.send_header('Content-Length', str(end - start + 1))
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                
-                f.seek(start)
-                self.range_info = (start, end)
-                return f
-                
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Content-Length', str(file_size))
-        self.send_header('Accept-Ranges', 'bytes')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.range_info = None
-        return f
-
-    def copyfile(self, source, outputfile):
-        if hasattr(self, 'range_info') and self.range_info:
-            start, end = self.range_info
-            remaining = end - start + 1
-            buffer_size = 64 * 1024
-            while remaining > 0:
-                chunk = source.read(min(remaining, buffer_size))
-                if not chunk:
-                    break
-                outputfile.write(chunk)
-                remaining -= len(chunk)
-        else:
-            super().copyfile(source, outputfile)
-
-    def translate_path(self, path):
-        global CURRENT_GENOME_DIR
-        decoded_path = urllib.parse.unquote(path)
-        if decoded_path.startswith("/genome/") and CURRENT_GENOME_DIR:
-            relative_path = decoded_path[len("/genome/"):]
-            return os.path.join(CURRENT_GENOME_DIR, relative_path)
-        return super().translate_path(path)
-
-
-def start_local_server(directory):
-    global CURRENT_SERVER
-    stop_local_server()
-    handler = lambda *args, **kwargs: RangeRequestHandler(*args, directory=directory, **kwargs)
-    try:
-        server = socketserver.TCPServer(("127.0.0.1", 0), handler)
-        port = server.socket.getsockname()[1]
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        CURRENT_SERVER = server
-        return port
-    except Exception as e:
-        logging.error(f"Failed to start local HTTP server: {e}")
-        raise e
-
-
-def stop_local_server():
-    global CURRENT_SERVER
-    if CURRENT_SERVER:
-        try:
-            CURRENT_SERVER.shutdown()
-            CURRENT_SERVER.server_close()
-        except Exception:
-            pass
-        CURRENT_SERVER = None
-
-
-def cleanup_tmpdir_force():
-    global CURRENT_TMPDIR
-    stop_local_server()
-    if CURRENT_TMPDIR:
-        shutil.rmtree(CURRENT_TMPDIR, ignore_errors=True)
-        CURRENT_TMPDIR = None
+def reset_igv_dir():
+    """Nouveau répertoire IGV dans la session ; les fichiers IGV précédents ne sont plus servis."""
+    server = get_server()
+    server.unregister_prefix(IGV_PREFIX)
+    igv_dir = session_path("igv", "index.html")
+    igv_dir = os.path.dirname(igv_dir)
+    shutil.rmtree(igv_dir, ignore_errors=True)
+    os.makedirs(igv_dir, exist_ok=True)
+    return server, igv_dir
 
 
 def get_asset_path(filename):
@@ -217,8 +116,6 @@ def open_igv(genome_fasta_path=None,
         sg.popup(tr("Aucun locus sélectionné"))
         return
         
-    global CURRENT_TMPDIR, CURRENT_GENOME_DIR
-
     if not sample_name:
         if spanning_bam_file:
             sample_name = os.path.basename(spanning_bam_file).split('.')[0]
@@ -227,19 +124,28 @@ def open_igv(genome_fasta_path=None,
         else:
             sample_name = "Sample"
 
+    # Répertoire IGV de la session : seuls les fichiers enregistrés ci-dessous sont servis
+    server, igv_dir = reset_igv_dir()
+
     if has_local_fasta:
-        CURRENT_GENOME_DIR = os.path.dirname(genome_fasta_path)
+        # Génome local servi par nom (liste blanche), jamais par chemin
+        server.register(f"{IGV_PREFIX}genome/{fasta_filename}", genome_fasta_path)
+        server.register(f"{IGV_PREFIX}genome/{fai_filename}", genome_fasta_path + ".fai")
         genome_option_js = json.dumps({
             "id": "local_genome",
             "name": fasta_filename,
-            "fastaURL": f"/genome/{fasta_filename}",
-            "indexURL": f"/genome/{fai_filename}"
+            "fastaURL": f"./genome/{fasta_filename}",
+            "indexURL": f"./genome/{fai_filename}"
         }, indent=4)
+        genome_warning_html = ""
     else:
         genome_option_js = '"hg38"'
-
-    cleanup_tmpdir_force()
-    CURRENT_TMPDIR = tempfile.mkdtemp()
+        genome_warning_html = (
+            '<div style="background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; padding: 10px 15px; '
+            'border-radius: 6px; margin-bottom: 15px; font-weight: 600;">'
+            + tr("Génome hg38 en ligne (igv.org) : ce n'est pas la référence locale utilisée par TRGT.")
+            + '</div>'
+        )
 
     asset_js_path = get_asset_path("igv.min.js")
     if not os.path.exists(asset_js_path):
@@ -247,7 +153,8 @@ def open_igv(genome_fasta_path=None,
         return
 
     try:
-        shutil.copy(asset_js_path, os.path.join(CURRENT_TMPDIR, "igv.min.js"))
+        shutil.copy(asset_js_path, os.path.join(igv_dir, "igv.min.js"))
+        server.register(f"{IGV_PREFIX}igv.min.js", os.path.join(igv_dir, "igv.min.js"))
     except Exception as e:
         sg.popup(f"Erreur :\n{e}")
         return
@@ -267,8 +174,8 @@ def open_igv(genome_fasta_path=None,
     if spanning_zip_path and spanning_bam_file and spanning_bai_file:
         try:
             with zipfile.ZipFile(spanning_zip_path, "r") as z:
-                z.extract(spanning_bam_file, CURRENT_TMPDIR)
-                z.extract(spanning_bai_file, CURRENT_TMPDIR)
+                for member in (spanning_bam_file, spanning_bai_file):
+                    server.register(f"{IGV_PREFIX}{member}", z.extract(member, igv_dir))
             tracks.append({
                 "name": f"Spanning BAM - {os.path.basename(spanning_bam_file)}",
                 "url": f"./{spanning_bam_file}",
@@ -292,8 +199,8 @@ def open_igv(genome_fasta_path=None,
     if mapped_zip_path and mapped_bam_file and mapped_bai_file:
         try:
             with zipfile.ZipFile(mapped_zip_path, "r") as z:
-                z.extract(mapped_bam_file, CURRENT_TMPDIR)
-                z.extract(mapped_bai_file, CURRENT_TMPDIR)
+                for member in (mapped_bam_file, mapped_bai_file):
+                    server.register(f"{IGV_PREFIX}{member}", z.extract(member, igv_dir))
             tracks.append({
                 "name": f"Mapped BAM - {os.path.basename(mapped_bam_file)}",
                 "url": f"./{mapped_bam_file}",
@@ -516,6 +423,7 @@ def open_igv(genome_fasta_path=None,
 </head>
 <body style="margin:0; padding:15px; background-color: #f4f6f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
     {clinical_header_html}
+    {genome_warning_html}
     <div id="igv-div" style="background-color: white; padding: 15px; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;"></div>
 
     <script type="text/javascript">
@@ -534,12 +442,11 @@ def open_igv(genome_fasta_path=None,
 </html>
 """
 
-    with open(os.path.join(CURRENT_TMPDIR, "index.html"), "w", encoding="utf-8") as f:
+    index_path = os.path.join(igv_dir, "index.html")
+    with open(index_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
     try:
-        port = start_local_server(CURRENT_TMPDIR)
-        url = f"http://127.0.0.1:{port}/index.html"
-        webbrowser.open(url)
+        webbrowser.open(server.register(f"{IGV_PREFIX}index.html", index_path))
     except Exception as e:
         sg.popup(f"Impossible de lancer igv.js :\n{e}")

@@ -177,11 +177,6 @@ def run_main_window():
     # Modification du titre officiel de la fenêtre
     window = sg.Window("TGV - TRGT Global Viewer", layout, finalize=True)
     
-    try:
-        window.TKroot.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
-    except Exception as e:
-        logging.warning(f"Failed to bind main window protocol: {e}")
-
 
     window.metadata = {
         "all_samples": [],

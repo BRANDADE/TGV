@@ -1,8 +1,10 @@
-import tempfile
 import os
 import webbrowser
 import logging
+from datetime import datetime
 from pathlib import Path
+
+from scripts.core.session_tmp import session_path
 
 try:
     from scripts.core.i18n import tr
@@ -394,9 +396,10 @@ def generate_html_table(headers, rows, sample_name, run_id=None, low_depth_thres
     return html
 
 
-def save_and_open_html(html_content):
+def save_and_open_html(html_content, name="tgv_export"):
     try:
-        tmp_path = os.path.join(tempfile.gettempdir(), "trgt_table.html")
+        # Répertoire de session (supprimé à la fermeture), nom unique par export
+        tmp_path = session_path("exports", f"{os.path.basename(name)}_{datetime.now():%Y%m%d_%H%M%S_%f}.html")
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         uri = Path(tmp_path).as_uri()
