@@ -1,5 +1,6 @@
 from scripts.core.clinical_compute import build_genotype_clinical, build_repetition_clinical
 from scripts.core.sequence_utils import format_interruptions, clean_and_sort_rep_string
+from scripts.core.trid_detector import make_readable_name
 from scripts.bio.labels import NO_CALL, ABSENT, ABSENT_DISPLAY
 
 
@@ -31,10 +32,16 @@ def fill_raw_base(result, trid_id, trid, a1, a2):
     # --- Informations globales ---
     result.trid = trid_id
 
-    clinical_name, gene = trid_id.split("_", 1)
+    # Nom affiché : bloc YAML (alias éventuel) sinon TRID ; les TRID sans « _ »
+    # des catalogues publics (ex. 'HTT') sont affichés tels quels.
+    display_key = getattr(trid, "clinical_key", None) or trid_id
+    if "_" in display_key:
+        clinical_name, gene = display_key.split("_", 1)
+    else:
+        clinical_name = gene = display_key
     result.clinical_name = clinical_name
     result.gene = gene
-    result.locus = f"{clinical_name} ({gene})"
+    result.locus = make_readable_name(display_key)
 
     result.chrom = trid.chrom
     result.start = trid.start

@@ -1,0 +1,25 @@
+# ===================================================================
+# Correspondance : identifiant de TRID du catalogue TRGT → bloc de clinical_thresholds.yaml
+#
+# Permet d'analyser un run génotypé avec un autre catalogue que celui du CHU
+# (ex. catalogue public de TRGT, dont les identifiants sont des noms de gènes) sans
+# dupliquer les seuils cliniques. Un TRID présent tel quel dans clinical_thresholds.yaml
+# n'est jamais remplacé par un alias.
+#
+# Catalogue public TRGT (pathogenic_repeats.hg38.bed) :
+#   https://github.com/PacificBiosciences/trgt/blob/main/repeats/pathogenic_repeats.hg38.bed
+# FGF14 (SCA27B) est absent de ce catalogue.
+# ===================================================================
+
+ATXN1: SCA1_ATXN1
+ATXN2: SCA2_ATXN2
+ATXN3: SCA3_ATXN3
+CACNA1A: SCA6_CACNA1A
+ATXN7: SCA7_ATXN7
+TBP: SCA17_TBP
+NOP56: SCA36_NOP56
+FXN: FRDA_FXN
+RFC1: CANVAS_RFC1
+C9ORF72: FTDALS1_C9orf72
+FMR1: FXS_FMR1
+LRP12: OPDM1_LRP12

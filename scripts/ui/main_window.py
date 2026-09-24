@@ -15,9 +15,9 @@ from scripts.core.artifact_lookup import sample_id_from_vcf_name
 from scripts.core.config_manager import get_safe_config_path
 from scripts.core.orchestrator import process_clinical, process_result, process_display
 
-from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds
+from scripts.bio.clinical_thresholds_loader import load_clinical_thresholds, load_trid_aliases
 from scripts.bio.clinical_config_validator import validate_thresholds
-from scripts.core.analysis import build_run_trids
+from scripts.core.analysis import build_run_trids, resolve_panel
 
 from scripts.ui.results_window import show_results_window
 from scripts.ui.igv import is_online, get_asset_path
@@ -373,7 +373,7 @@ def run_main_window():
             # ---------------------------------------------------------
             # Création des TRIDs globaux + remplissage infos immuables + clinique
             # ---------------------------------------------------------
-            trids, diseases, run.trids = build_run_trids(zip_path, thresholds_data)
+            trids, diseases, run.trids = build_run_trids(zip_path, thresholds_data, load_trid_aliases())
             logging.info(f"Initialized {len(trids)} genomic loci structures.")
 
             for trid_id, t in run.trids.items():
@@ -565,9 +565,8 @@ def run_main_window():
             panels = window.metadata["button_panels"]
             if panel_name in panels:
                 requested = panels[panel_name]
-                detected = set(window.metadata["all_trids"])
-                existing = [t for t in requested if t in detected]
-                missing = [t for t in requested if t not in detected]
+                run = window.metadata.get("run")
+                existing, missing = resolve_panel(requested, run.trids if run else {})
 
                 window.metadata["selected_trids"] = existing
                 update_trid_selected(window)

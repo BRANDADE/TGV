@@ -27,12 +27,12 @@ def analyze(tmp_path):
     Analyse un patient synthétique de bout en bout (parsing → classification → affichage).
     Retourne {trid_id: Result}.
     """
-    def _analyze(records, thresholds=None, sample="S1", selected=None):
+    def _analyze(records, thresholds=None, sample="S1", selected=None, aliases=None):
         thresholds = thresholds or load_thresholds()
         vcf_name = f"{sample}.trgt.sorted.vcf"
         zip_path = write_zip(tmp_path / f"{sample}-trgt_vcfs.zip", {vcf_name: vcf_text(records, sample=sample)})
 
-        trids, _, run_trids = build_run_trids(zip_path, thresholds)
+        trids, _, run_trids = build_run_trids(zip_path, thresholds, aliases)
         sample_trids = parse_vcf_for_sample(zip_path, vcf_name, run_trids)
         results, _, _ = run_analysis(
             vcf_name, sample_trids, run_trids, selected or trids,

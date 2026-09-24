@@ -34,6 +34,27 @@ def load_clinical_thresholds():
         return {}
 
 
+def load_trid_aliases():
+    """
+    Charge configs/trid_aliases.yaml : {TRID du catalogue: bloc de clinical_thresholds.yaml}.
+    Renvoie {} si le fichier est absent ou illisible (aucun alias).
+    """
+    path = get_safe_config_path("trid_aliases.yaml")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logging.warning(f"Failed to load trid_aliases.yaml: {e}")
+        return {}
+
+    if not isinstance(data, dict):
+        logging.warning("trid_aliases.yaml must map catalog TRIDs to clinical_thresholds.yaml blocks.")
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
+
+
 # ============================================================
 # Getter priority
 # ============================================================

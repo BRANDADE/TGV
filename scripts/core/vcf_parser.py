@@ -88,8 +88,14 @@ def empty_allele(status):
     return allele
 
 
-def build_called_allele(cons, fields, i, motifs, orientation):
-    """Construit un allèle appelé à partir de sa séquence et de ses champs FORMAT (position i)."""
+def build_called_allele(cons, fields, i, motifs, orientation, motif_names=None):
+    """
+    Construit un allèle appelé à partir de sa séquence et de ses champs FORMAT (position i).
+
+    motifs      : motifs du catalogue, orientés (servent à la segmentation RC) ;
+    motif_names : noms affichés/classés (cadre de lecture du YAML), même ordre.
+    """
+    motif_names = motif_names or motifs
     mc_raw = _value(fields["MC"], i)
     ms_raw = _value(fields["MS"], i)
 
@@ -98,8 +104,10 @@ def build_called_allele(cons, fields, i, motifs, orientation):
         cons = reverse_complement(cons)
         ms_raw = rc_segmentation(cons, ",".join(motifs))
 
-    mc = convert_mc(motifs, mc_raw)
-    ms = convert_ms(motifs, ms_raw)
+    # Les comptes (MC) et les coordonnées (MS) restent ceux de TRGT ; seuls les noms
+    # des motifs sont ramenés au cadre de lecture du YAML (ex. GCA → CAG).
+    mc = convert_mc(motif_names, mc_raw)
+    ms = convert_ms(motif_names, ms_raw)
 
     allele = Allele(
         size=_value(fields["AL"], i),
@@ -163,6 +171,9 @@ def parse_vcf_for_sample(zip_path, vcf_filename, global_trids):
                         orientation = "rc"
                         motifs = [reverse_complement(m) for m in motifs]
 
+                motif_frame = getattr(trid_global, "motif_frame", None) or {}
+                motif_names = [motif_frame.get(m, m) for m in motifs]
+
                 # -----------------------------
                 # FORMAT → extraction TRGT (valeurs dans l'ordre des allèles TRGT)
                 # -----------------------------
@@ -178,7 +189,7 @@ def parse_vcf_for_sample(zip_path, vcf_filename, global_trids):
                 alleles = []
                 for i, index in enumerate(indices[:2]):
                     cons = allele_sequence(index, ref, alt_list)
-                    alleles.append(build_called_allele(cons, fields, i, motifs, orientation))
+                    alleles.append(build_called_allele(cons, fields, i, motifs, orientation, motif_names))
 
                 # Complément à deux allèles : haploïde → absent ; sinon non appelé
                 while len(alleles) < 2:

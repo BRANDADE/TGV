@@ -11,6 +11,9 @@ username = getpass.getuser()
 hostname = platform.node()
 CONFIG_FILE_NAME = f"ui_settings_{username}_{hostname}.json"
 
+# Racine du dépôt (scripts/core/config_manager.py → ../..)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 
 def get_safe_config_path(filename, folder="configs"):
     """
@@ -24,8 +27,9 @@ def get_safe_config_path(filename, folder="configs"):
         exe_dir = os.path.dirname(sys.executable)
         bundle_dir = sys._MEIPASS  # Dossier interne temporaire de l'EXE
     else:
-        # Lancé depuis le script Python standard (main.py)
-        exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        # Lancé depuis les sources (main.py, tgv_cli.py, tests) : racine du projet,
+        # indépendamment du répertoire courant et du script lancé
+        exe_dir = PROJECT_ROOT
         bundle_dir = exe_dir
 
     # Chemin externe (modifiable à côté du .exe)
