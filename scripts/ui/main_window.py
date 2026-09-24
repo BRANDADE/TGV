@@ -12,6 +12,7 @@ from scripts.models.dto import AnalysisInput
 from scripts.core.vcf_loader import list_vcfs
 from scripts.core.vcf_parser import parse_vcf_for_sample
 from scripts.core.utils import get_analysis_prefix
+from scripts.core.artifact_lookup import sample_id_from_vcf_name
 from scripts.core.sequence_utils import reverse_complement
 from scripts.core.trid_detector import autodetect_trids
 from scripts.core.config_manager import get_safe_config_path
@@ -774,7 +775,7 @@ def run_main_window():
             run_id = run.name if run else ""
 
             show_results_window(
-                sample_name=sample_name.split(".trgt")[0],
+                sample_name=sample_id_from_vcf_name(sample_name),
                 results=results,
                 label_priority=analysis_input.label_priority,
                 paths=analysis_input.paths,

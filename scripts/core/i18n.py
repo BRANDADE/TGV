@@ -27,6 +27,7 @@ TRANSLATIONS = {
         "Patient :": "Patient:",
         "ID Patient :": "Patient ID:",
         "Locus :": "Locus:",
+        "Fichiers :": "Files:",
         "Non classifié": "Unclassified",
         "Non classé": "Unclassified",
         "Motif :": "Motif:",

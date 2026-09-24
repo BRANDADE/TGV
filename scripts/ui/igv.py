@@ -21,74 +21,6 @@ CURRENT_SERVER = None
 CURRENT_GENOME_DIR = None
 
 
-def find_spanning_bam(zip_path, sample_name):
-    if not zip_path or not os.path.isfile(zip_path):
-        return None
-    with zipfile.ZipFile(zip_path, "r") as z:
-        names = z.namelist()
-    sample_lower = sample_name.lower()
-    for n in names:
-        if n.endswith(".bam") and sample_lower in n.lower():
-            bai = n + ".bai"
-            if bai in names:
-                return zip_path, n, bai
-    return None
-
-
-def find_mapped_bam(zip_path, sample_name):
-    if not zip_path or not os.path.isfile(zip_path):
-        return None
-    with zipfile.ZipFile(zip_path, "r") as z:
-        names = z.namelist()
-    sample_lower = sample_name.lower()
-    for n in names:
-        if n.endswith(".bam") and sample_lower in n.lower():
-            bai = n + ".bai"
-            if bai in names:
-                return zip_path, n, bai
-    return None
-
-
-def get_available_bam(paths, sample_name):
-    zip_path = paths.get("repeat_reads") or paths.get("mapped_bam")
-    if not zip_path or not os.path.isfile(zip_path):
-        return None
-    precise_match = find_mapped_bam(zip_path, sample_name)
-    if precise_match:
-        return precise_match
-    with zipfile.ZipFile(zip_path, "r") as z:
-        bam_file = None
-        bai_file = None
-        for f in z.namelist():
-            if f.endswith(".bam") and sample_name in f:
-                bam_file = f
-            if f.endswith(".bai") and sample_name in f:
-                bai_file = f
-        if bam_file:
-            return (zip_path, bam_file, bai_file)
-    return None
-
-
-def get_available_spanning_bam(paths, sample_name):
-    zip_path = paths.get("spanning_bam")
-    if not zip_path or not os.path.isfile(zip_path):
-        return None
-    precise_match = find_spanning_bam(zip_path, sample_name)
-    if precise_match:
-        return precise_match
-    with zipfile.ZipFile(zip_path, "r") as z:
-        bam_file = None
-        bai_file = None
-        for f in z.namelist():
-            if f.endswith(".bam") and sample_name in f:
-                bam_file = f
-            if f.endswith(".bai") and sample_name in f:
-                bai_file = f
-        if bam_file:
-            return (zip_path, bam_file, bai_file)
-    return None
-
-
 def is_online():
     logging.debug("Probing active internet connection...")
     try:
@@ -338,7 +270,7 @@ def open_igv(genome_fasta_path=None,
                 z.extract(spanning_bam_file, CURRENT_TMPDIR)
                 z.extract(spanning_bai_file, CURRENT_TMPDIR)
             tracks.append({
-                "name": f"Spanning BAM - {sample_name}",
+                "name": f"Spanning BAM - {os.path.basename(spanning_bam_file)}",
                 "url": f"./{spanning_bam_file}",
                 "indexURL": f"./{spanning_bai_file}",
                 "type": "alignment",
@@ -363,7 +295,7 @@ def open_igv(genome_fasta_path=None,
                 z.extract(mapped_bam_file, CURRENT_TMPDIR)
                 z.extract(mapped_bai_file, CURRENT_TMPDIR)
             tracks.append({
-                "name": f"Mapped BAM - {sample_name}",
+                "name": f"Mapped BAM - {os.path.basename(mapped_bam_file)}",
                 "url": f"./{mapped_bam_file}",
                 "indexURL": f"./{mapped_bai_file}",
                 "type": "alignment",
@@ -385,6 +317,10 @@ def open_igv(genome_fasta_path=None,
     if not tracks:
         sg.popup(tr("Aucun BAM disponible"))
         return
+
+    # Noms réels des fichiers affichés : l'identité du patient doit être vérifiable
+    shown_files = [os.path.basename(f) for f in (spanning_bam_file, mapped_bam_file) if f]
+    files_str = ", ".join(shown_files) if shown_files else "N/A"
 
     start_padded = max(0, start - PADDING)
     end_padded = end + PADDING
@@ -506,6 +442,9 @@ def open_igv(genome_fasta_path=None,
                     <div style="font-size: 0.85rem; color: #cbd5e1; margin-top: 4px; font-weight: 500;">
                         {tr("Locus :")} <span style="font-family: monospace; background: rgba(255,255,255,0.15); padding: 2px 6px; border-radius: 4px;">{chrom}:{start}-{end}</span>
                     </div>
+                    <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">
+                        {tr("Fichiers :")} <span style="font-family: monospace;">{files_str}</span>
+                    </div>
                 </div>
             </div>
             
@@ -560,6 +499,9 @@ def open_igv(genome_fasta_path=None,
                 <div style="font-size: 1.2rem; font-weight: 700; color: #e8457a;">{tr("ID Patient :")} <span style="color: #e8457a;">{sample_name}</span></div>
                 <div style="font-size: 0.85rem; color: #cbd5e1; margin-top: 4px; font-weight: 500;">
                     {tr("Locus :")} <span style="font-family: monospace; background: rgba(255,255,255,0.15); padding: 2px 6px; border-radius: 4px;">{chrom}:{start}-{end}</span>
+                </div>
+                <div style="font-size: 0.8rem; color: #cbd5e1; margin-top: 4px;">
+                    {tr("Fichiers :")} <span style="font-family: monospace;">{files_str}</span>
                 </div>
             </div>
         </div>

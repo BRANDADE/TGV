@@ -6,11 +6,22 @@ import tempfile
 import logging
 
 from scripts.core.config_manager import load_ui_settings, save_ui_settings
-from scripts.core.plots import open_svg, get_available_plots
+from scripts.core.plots import open_svg
+from scripts.core.artifact_lookup import (
+    AmbiguousArtifactError, find_plot, get_mapped_bam, get_spanning_bam,
+)
 from scripts.ui.results_table import build_results_table
 from scripts.ui.results_details import build_details_panel, update_details
 from scripts.ui.html_export import generate_html_table, save_and_open_html
-from scripts.ui.igv import open_igv, get_available_spanning_bam, get_available_bam
+from scripts.ui.igv import open_igv
+
+# Libellé affiché → catégorie des archives de graphiques (convention du builder)
+PLOT_CATEGORIES = [
+    ("Motifs allele", "motifs_allele"),
+    ("Motifs waterfall", "motifs_waterfall"),
+    ("Meth allele", "meth_allele"),
+    ("Meth waterfall", "meth_waterfall"),
+]
 
 
 def can_open_igv(r, paths, sample_name, online_status):
@@ -19,8 +30,12 @@ def can_open_igv(r, paths, sample_name, online_status):
     Affiche des informations de débogage dans la console en cas de problème.
     """
     # 1. Vérification des BAMs (Au moins un BAM requis)
-    span = get_available_spanning_bam(paths, sample_name)
-    mapped = get_available_bam(paths, sample_name)
+    try:
+        span = get_spanning_bam(paths, sample_name)
+        mapped = get_mapped_bam(paths, sample_name)
+    except AmbiguousArtifactError as e:
+        logging.error(f"IGV disabled for patient '{sample_name}': {e}")
+        return False
     
     logging.debug(f"IGV validation for locus: {r.chrom}:{r.start}-{r.end}")
     logging.debug(f"  - Spanning BAM found: {span is not None}")
@@ -353,25 +368,21 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             plot_entries = []
             plot_map.clear()
 
-            if paths.get("motifs_allele"):
-                for inner_zip, svg_file in get_available_plots(paths["motifs_allele"], sample_name, r.trid):
-                    plot_entries.append("Motifs allele")
-                    plot_map["Motifs allele"] = (inner_zip, svg_file)
-
-            if paths.get("motifs_waterfall"):
-                for inner_zip, svg_file in get_available_plots(paths["motifs_waterfall"], sample_name, r.trid):
-                    plot_entries.append("Motifs waterfall")
-                    plot_map["Motifs waterfall"] = (inner_zip, svg_file)
-
-            if paths.get("meth_allele"):
-                for inner_zip, svg_file in get_available_plots(paths["meth_allele"], sample_name, r.trid):
-                    plot_entries.append("Meth allele")
-                    plot_map["Meth allele"] = (inner_zip, svg_file)
-
-            if paths.get("meth_waterfall"):
-                for inner_zip, svg_file in get_available_plots(paths["meth_waterfall"], sample_name, r.trid):
-                    plot_entries.append("Meth waterfall")
-                    plot_map["Meth waterfall"] = (inner_zip, svg_file)
+            for plot_label, category in PLOT_CATEGORIES:
+                zip_path = paths.get(category)
+                if not zip_path or not os.path.isfile(zip_path):
+                    continue
+                try:
+                    found = find_plot(zip_path, sample_name, category, r.trid)
+                except AmbiguousArtifactError as e:
+                    logging.error(f"Plot '{plot_label}' disabled for patient '{sample_name}': {e}")
+                    continue
+                except Exception as e:
+                    logging.warning(f"Failed to read plots from archive '{zip_path}': {e}")
+                    continue
+                if found:
+                    plot_entries.append(plot_label)
+                    plot_map[plot_label] = (zip_path, *found)
 
             window["-PLOT-LIST-"].update(values=plot_entries)
             window["-PLOT-OPEN-"].update(disabled=not bool(plot_entries))
@@ -405,21 +416,10 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             if not label:
                 continue
 
-            inner_zip, svg_file = plot_map[label]
-
-            if label == "Motifs allele":
-                zip_path = paths["motifs_allele"]
-            elif label == "Motifs waterfall":
-                zip_path = paths["motifs_waterfall"]
-            elif label == "Meth allele":
-                zip_path = paths["meth_allele"]
-            elif label == "Meth waterfall":
-                zip_path = paths["meth_waterfall"]
-            else:
-                zip_path = None
-
-            if zip_path:
-                open_svg(zip_path, inner_zip, svg_file, sample_name)
+            if label not in plot_map:
+                continue
+            zip_path, inner_zip, svg_file = plot_map[label]
+            open_svg(zip_path, inner_zip, svg_file, sample_name)
 
         if ev == "-CL_VALIDATE-":
             if not vals["-TABLE-"]:
@@ -661,13 +661,19 @@ def show_results_window(sample_name, results, label_priority, paths, online_stat
             row = rows[idx]
             r = row["Result_obj"]
 
-            span = get_available_spanning_bam(paths, sample_name)
+            try:
+                span = get_spanning_bam(paths, sample_name)
+                mapped = get_mapped_bam(paths, sample_name)
+            except AmbiguousArtifactError as e:
+                logging.error(f"IGV aborted for patient '{sample_name}': {e}")
+                sg.popup_error(f"Fichiers BAM ambigus pour le patient {sample_name} :\n{e}")
+                continue
+
             if span:
                 spanning_zip_path, spanning_bam_file, spanning_bai_file = span
             else:
                 spanning_zip_path = spanning_bam_file = spanning_bai_file = None
 
-            mapped = get_available_bam(paths, sample_name)
             if mapped:
                 mapped_zip_path, mapped_bam_file, mapped_bai_file = mapped
             else:

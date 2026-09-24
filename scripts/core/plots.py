@@ -12,37 +12,6 @@ import subprocess
 import logging
 
 
-def get_available_plots(zip_path, sample_name, trid):
-    """
-    Retourne une liste de tuples (inner_zip, svg_file)
-    pour un TRID donné dans un ZIP imbriqué TRGT/TRVZ.
-    """
-
-    if not zip_path or not os.path.exists(zip_path):
-        return []
-
-    results = []
-
-    try:
-        with zipfile.ZipFile(zip_path, "r") as outer:
-            # Exemple : S18_motifs_allele.trvz_alleles.zip
-            for name in outer.namelist():
-                if name.startswith(sample_name) and name.endswith(".trvz_alleles.zip"):
-                    # ZIP interne trouvé
-                    with outer.open(name) as inner_file:
-                        inner_bytes = inner_file.read()
-                        with zipfile.ZipFile(io.BytesIO(inner_bytes)) as inner:
-                            target = f"{trid}.trvz.svg"
-                            if target in inner.namelist():
-                                results.append((name, target))
-
-    except Exception as e:
-        logging.warning(f"Failed to read plots from archive '{zip_path}': {e}")
-
-    return results
-
-
-
 def open_svg(zip_path, inner_zip, svg_file, sample_name):
     logging.info(f"Extracting SVG plot '{svg_file}' from nested archive: '{inner_zip}'")
     try:
