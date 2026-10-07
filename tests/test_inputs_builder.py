@@ -157,3 +157,61 @@ def test_aggregation_names_input_bams_per_sample_and_adds_manifest(tmp_path):
     with zipfile.ZipFile(os.path.join(output_root, "RUN-trgt_vcfs.zip")) as z:
         assert json.loads(z.read("run_manifest.json"))["samples"]["S1"]["karyotype"] == "XY"
     assert os.path.exists(os.path.join(output_root, "RUN-manifest.json"))
+
+
+# --- Rapport QC : métriques de lectures et profondeur par allèle -----------------
+
+def _sam(flag, seq, qual):
+    return "\t".join(["r", str(flag), "chr1", "1", "60", f"{len(seq)}M", "*", "0", "0", seq, qual]) + "\n"
+
+
+def test_read_qv_averages_error_probabilities():
+    # Q40 partout → Q40 ; un mélange Q10/Q40 est dominé par les erreurs (≈ Q13), pas Q25
+    assert round(builder.read_qv("I" * 10)) == 40
+    assert round(builder.read_qv("+" * 5 + "I" * 5)) == 13
+    assert builder.read_qv("*") is None
+
+
+def test_hist_median_uses_sorted_values():
+    assert builder.hist_median({5000: 1, 4800: 1, 5200: 1}) == 5000
+    assert builder.hist_median({}) == 0
+
+
+def test_summarise_reads_counts_all_primary_reads():
+    lines = [_sam(0, "A" * 100, "I" * 100), _sam(16, "C" * 300, "I" * 300),
+             _sam(0x100, "G" * 50, "I" * 50),          # secondaire : ignorée
+             _sam(0x800, "T" * 70, "I" * 70)]          # supplémentaire : ignorée
+    m = builder.summarise_reads(lines * 6000)            # > 10 000 lectures : aucun échantillonnage
+    assert m["num_reads"] == 12000
+    assert m["total_bases"] == 6000 * 400
+    assert m["median_read_length"] == 100
+    assert m["median_read_qv"] == 40
+
+
+def test_qc_depth_sums_homozygous_calls():
+    assert builder.qc_depth([43, 43], "1/1") == 86
+    assert builder.qc_depth([100, 8], "0/1") == 8
+    assert builder.qc_depth([40], "1") == 40
+    assert builder.qc_depth([], ".") == 0
+
+
+def test_parse_vcf_for_qc_applies_tgv_rule(tmp_path):
+    import gzip
+    vcf = tmp_path / "s.trgt.sorted.vcf.gz"
+    rows = [
+        ("FXS_FMR1", "1/1", "43,43"),     # homozygote : 86 lectures → non signalé
+        ("FRDA_FXN", "0/1", "100,8"),     # allèle expansé à 8 lectures → signalé
+    ]
+    with gzip.open(vcf, "wt") as f:
+        f.write("##fileformat=VCFv4.2\n")
+        for trid, gt, sd in rows:
+            f.write("\t".join(["chr1", "1", ".", "A", "C", ".", ".", f"TRID={trid}",
+                               "GT:SD", f"{gt}:{sd}"]) + "\n")
+    details, summary = builder.parse_vcf_for_qc(str(vcf), dp_threshold=50)
+    assert details["FXS_FMR1"]["min_dp"] == 86
+    assert [f["repeat_id"] for f in summary["flagged_loci"]] == ["FRDA_FXN"]
+
+
+def test_default_params_file_declares_qc_thresholds():
+    *_, qc = builder.load_trgt_params(builder.DEFAULT_PARAMS_FILE)
+    assert qc == {"min_allele_depth": 50, "min_mean_coverage": 10, "min_pct_pass_loci": 90}

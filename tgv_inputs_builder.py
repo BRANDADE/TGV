@@ -13,6 +13,8 @@ import subprocess
 import zipfile
 import glob
 import hashlib
+import math
+from collections import Counter
 
 # Chargement optionnel des librairies
 try:
@@ -729,61 +731,91 @@ def run_trgt_genotype(sample_id, bam_path, karyotype, threads_for_this_sample, a
 
 # --- FONCTIONS DE CALCUL ET GÉNÉRATION DE RAPPORT DE QC ---
 
-def get_bam_metrics(bam_path, samtools_exe="samtools"):
-    """Extrait les métriques réelles globales du BAM d'entrée de manière optimisée."""
+def read_qv(qual):
+    """
+    Qualité d'une lecture (QV Phred) à partir de sa chaîne de qualités.
+
+    On moyenne les probabilités d'erreur, puis on repasse en échelle Phred :
+    la moyenne directe des scores Phred surestime la qualité.
+    """
+    if not qual or qual == "*":
+        return None
+    mean_error = sum(10 ** (-(ord(c) - 33) / 10) for c in qual) / len(qual)
+    if mean_error <= 0:
+        return 93  # QV maximal codable en Phred+33
+    return min(93, -10 * math.log10(mean_error))
+
+
+def hist_median(hist):
+    """Médiane (valeur basse en cas d'effectif pair) d'un histogramme {valeur: effectif}."""
+    total = sum(hist.values())
+    if total == 0:
+        return 0
+    rank = (total - 1) // 2
+    seen = 0
+    for value in sorted(hist):
+        seen += hist[value]
+        if seen > rank:
+            return value
+    return 0
+
+
+def summarise_reads(sam_lines):
+    """
+    Métriques des lectures primaires à partir de lignes SAM (sans en-tête).
+
+    Toutes les lectures sont comptées (aucun échantillonnage). Retourne le nombre
+    de lectures, le total de bases et les histogrammes de longueur et de QV
+    (arrondi à l'entier), qui permettent de calculer les médianes du run.
+    """
     num_reads = 0
-    lengths = []
-    qualities = []
-
-    if not os.path.exists(bam_path):
-        return num_reads, 0, "Q0"
-
-    try:
-        cmd_idx = [samtools_exe, "idxstats", bam_path]
-        res = subprocess.run(cmd_idx, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-        for line in res.stdout.strip().split("\n"):
-            parts = line.split("\t")
-            if len(parts) >= 4:
-                num_reads += int(parts[2]) + int(parts[3])
-    except Exception:
+    total_bases = 0
+    length_hist = Counter()
+    qv_hist = Counter()
+    for line in sam_lines:
+        parts = line.split("\t")
+        if len(parts) < 11:
+            continue
         try:
-            cmd_count = [samtools_exe, "view", "-c", bam_path]
-            res = subprocess.run(cmd_count, stdout=subprocess.PIPE, text=True, check=True)
-            num_reads = int(res.stdout.strip())
-        except Exception:
-            num_reads = 0
+            flag = int(parts[1])
+        except ValueError:
+            continue
+        if flag & 0x900:  # secondaire ou supplémentaire : pas une lecture de plus
+            continue
+        seq = parts[9]
+        if seq == "*":
+            continue
+        num_reads += 1
+        total_bases += len(seq)
+        length_hist[len(seq)] += 1
+        qv = read_qv(parts[10].strip())
+        if qv is not None:
+            qv_hist[int(round(qv))] += 1
+    return {
+        "num_reads": num_reads,
+        "total_bases": total_bases,
+        "median_read_length": hist_median(length_hist),
+        "median_read_qv": hist_median(qv_hist),
+        "length_hist": length_hist,
+        "qv_hist": qv_hist,
+    }
 
-    cmd_view = [samtools_exe, "view", bam_path]
+
+def get_bam_metrics(bam_path, samtools_exe="samtools"):
+    """Métriques des lectures primaires du BAM d'entrée, calculées sur toutes les lectures."""
+    empty = summarise_reads([])
+    if not os.path.exists(bam_path):
+        return empty
     try:
-        process = subprocess.Popen(cmd_view, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        count = 0
-        for line in process.stdout:
-            parts = line.split("\t")
-            if len(parts) > 10:
-                seq = parts[9]
-                qual = parts[10].strip()
-                lengths.append(len(seq))
-                if qual and qual != "*":
-                    mean_q = sum(ord(c) - 33 for c in qual) / len(qual)
-                    qualities.append(mean_q)
-                count += 1
-                if count >= 10000:
-                    break
+        process = subprocess.Popen([samtools_exe, "view", "-F", "0x900", bam_path],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        metrics = summarise_reads(process.stdout)
         process.stdout.close()
-        process.terminate()
         process.wait()
+        return metrics
     except Exception as e:
-        log_file_only(f"Error sampling BAM reads for metrics: {e}")
-
-    if not lengths:
-        return num_reads, 0, "Q0"
-
-    lengths.sort()
-    qualities.sort()
-    median_length = lengths[len(lengths) // 2]
-    median_q_val = qualities[len(qualities) // 2] if qualities else 0
-
-    return num_reads, median_length, f"Q{round(median_q_val)}"
+        log_file_only(f"Error reading BAM reads for metrics: {e}")
+        return empty
 
 
 def get_flagstat_metrics(bam_path, samtools_exe="samtools"):
@@ -898,11 +930,27 @@ def parse_per_allele_dp(fmt_dict):
     return []
 
 
-def parse_vcf_for_qc(vcf_path, dp_threshold=10):
+def qc_depth(dp_per_allele, gt):
     """
-    Qualifie chaque locus sur son allèle le MOINS couvert (min_dp), et non
-    sur la profondeur totale ou moyenne des deux allèles. Voir
-    parse_per_allele_dp() pour le raisonnement complet.
+    Profondeur sur laquelle un locus est qualifié, avec la même règle que TGV
+    (scripts/core/comments.py) : l'allèle le moins couvert pour un hétérozygote,
+    la somme des deux pour un homozygote (TRGT répartit les lectures entre deux
+    allèles identiques).
+    """
+    if not dp_per_allele:
+        return 0
+    indices = [x for x in (gt or "").replace("|", "/").split("/") if x not in ("", ".")]
+    if len(indices) == 2 and indices[0] == indices[1] and len(dp_per_allele) == 2:
+        return sum(dp_per_allele)
+    return min(dp_per_allele)
+
+
+def parse_vcf_for_qc(vcf_path, dp_threshold=50):
+    """
+    Qualifie chaque locus sur la profondeur de qc_depth() : allèle le MOINS
+    couvert, ou somme des deux pour un homozygote, jamais la profondeur totale
+    d'un hétérozygote. Voir parse_per_allele_dp() pour le raisonnement complet.
+    Le seuil vient de "qc_thresholds.min_allele_depth" (trgt_params.json5).
     """
     locus_details = {}
     summary = {"n_loci": 0, "pct_pass": 0.0, "mean_min_allele_dp": 0.0, "flagged_loci": []}
@@ -937,7 +985,7 @@ def parse_vcf_for_qc(vcf_path, dp_threshold=10):
                 is_pass = (vcf_filt == '.' or vcf_filt == 'PASS')
 
                 dp_per_allele = parse_per_allele_dp(fmt_dict)
-                min_dp = min(dp_per_allele) if dp_per_allele else 0
+                min_dp = qc_depth(dp_per_allele, fmt_dict.get("GT"))
 
                 locus_details[locus_id] = {
                     "dp_per_allele": dp_per_allele,
@@ -1101,9 +1149,16 @@ def extract_trid_from_info(info_field):
     return match.group(1) if match else "UNKNOWN"
 
 
-def process_sample_qc(sample_id, bam_path, output_root, args, repeat_ids, samtools_exe):
+DEFAULT_QC_THRESHOLDS = {"min_allele_depth": 50, "min_mean_coverage": 10.0, "min_pct_pass_loci": 90.0}
+
+
+def process_sample_qc(sample_id, bam_path, output_root, args, repeat_ids, samtools_exe, qc_thresholds=None):
     """Calcule la QC technique d'un échantillon de manière isolée."""
-    num_reads, med_len, med_qual = get_bam_metrics(bam_path, samtools_exe)
+    qc = {**DEFAULT_QC_THRESHOLDS, **(qc_thresholds or {})}
+    reads = get_bam_metrics(bam_path, samtools_exe)
+    num_reads = reads["num_reads"]
+    med_len = reads["median_read_length"]
+    med_qual = f"Q{reads['median_read_qv']}"
 
     flagstat = get_flagstat_metrics(bam_path, samtools_exe)
     pct_ontarget = get_ontarget_pct(bam_path, args.bed, flagstat["mapped"], samtools_exe)
@@ -1119,7 +1174,7 @@ def process_sample_qc(sample_id, bam_path, output_root, args, repeat_ids, samtoo
     pct_low = (sum(1 for v in cov_vals if v < 5.0) / total_targets) * 100
 
     sorted_vcf = os.path.join(output_root, sample_id, f"{sample_id}.trgt.sorted.vcf.gz")
-    vcf_details, vcf_summary = parse_vcf_for_qc(sorted_vcf)
+    vcf_details, vcf_summary = parse_vcf_for_qc(sorted_vcf, dp_threshold=int(qc["min_allele_depth"]))
 
     bam_metrics_dict = {
         "num_reads": num_reads,
@@ -1135,11 +1190,16 @@ def process_sample_qc(sample_id, bam_path, output_root, args, repeat_ids, samtoo
         "pct_on_target": pct_ontarget
     }
 
-    status, flags = compute_sample_status(bam_metrics_dict, vcf_summary)
+    status, flags = compute_sample_status(bam_metrics_dict, vcf_summary,
+                                          min_mean_cov=float(qc["min_mean_coverage"]),
+                                          min_pct_pass=float(qc["min_pct_pass_loci"]))
 
     return {
         "sample_id": sample_id,
         "num_reads": num_reads,
+        "total_bases": reads["total_bases"],
+        "length_hist": reads["length_hist"],
+        "qv_hist": reads["qv_hist"],
         "median_read_length": med_len,
         "median_read_quality": med_qual,
         "coverages": coverages,
@@ -1160,7 +1220,7 @@ def process_sample_qc(sample_id, bam_path, output_root, args, repeat_ids, samtoo
 
 def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals, args, 
                        samtools_exe="samtools", bcftools_exe="bcftools",
-                       cov_thresholds=None, cov_colors=None, cov_labels=None):
+                       cov_thresholds=None, cov_colors=None, cov_labels=None, qc_thresholds=None):
     """Génère le package ZIP complet contenant l'ensemble des métriques de QC structurées et visuelles."""
     
     # Initialisation des valeurs de secours si aucun argument n'est fourni
@@ -1186,8 +1246,8 @@ def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals
 
     total_bases_run = 0
     total_reads_run = 0
-    all_lengths = []
-    all_qualities = []
+    run_length_hist = Counter()
+    run_qv_hist = Counter()
 
     sum_reads = 0
     sum_lengths = 0
@@ -1214,7 +1274,8 @@ def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals
                 output_root,
                 args,
                 repeat_ids,
-                samtools_exe
+                samtools_exe,
+                qc_thresholds
             ): sample_id
             for sample_id in sample_list_ordered
         }
@@ -1248,12 +1309,9 @@ def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals
         flags = result["flags"]
 
         total_reads_run += num_reads
-        total_bases_run += (num_reads * med_len)
-        all_lengths.append(med_len)
-        try:
-            all_qualities.append(int(med_qual[1:]))
-        except ValueError:
-            all_qualities.append(0)
+        total_bases_run += result["total_bases"]
+        run_length_hist.update(result["length_hist"])
+        run_qv_hist.update(result["qv_hist"])
 
         for rid in repeat_ids:
             coverage_matrix[rid].append(coverages.get(rid, 0.0))
@@ -1261,7 +1319,7 @@ def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals
         run_metrics_rows.append({
             "sample_id": sample_id,
             "num_reads": num_reads,
-            "total_bases": num_reads * med_len,
+            "total_bases": result["total_bases"],
             "median_read_length": med_len,
             "median_read_quality": med_qual
         })
@@ -1336,8 +1394,9 @@ def generate_qc_report(output_root, run_name, samples, repeat_ids, bed_intervals
         f"{avg_pct_dup:.2f}%"
     ])
 
-    med_length_global = all_lengths[len(all_lengths)//2] if all_lengths else 0
-    med_qual_global = f"Q{round(sum(all_qualities)/len(all_qualities))}" if all_qualities else "Q0"
+    # Médianes du run sur l'ensemble des lectures (et non sur les médianes par échantillon)
+    med_length_global = hist_median(run_length_hist)
+    med_qual_global = f"Q{hist_median(run_qv_hist)}"
 
     global_report_data = {
         "attributes": [
@@ -1584,7 +1643,7 @@ def load_trgt_params(params_file):
     """
     Charge le fichier de paramètres TRGT (JSON5). Absent ou illisible → arrêt :
     sans paramètres, TRGT tournerait avec son preset par défaut ('wgs').
-    Retourne (genotype, plot, coverage_thresholds, coverage_colors, coverage_labels).
+    Retourne (genotype, plot, coverage_thresholds, coverage_colors, coverage_labels, qc_thresholds).
     """
     if json5 is None:
         logging.error("The 'json5' module is required to read TRGT parameters (pip install -r requirements-builder.txt).")
@@ -1606,6 +1665,7 @@ def load_trgt_params(params_file):
         config.get("coverage_thresholds"),
         config.get("coverage_colors"),
         config.get("coverage_labels"),
+        config.get("qc_thresholds"),
     )
 
 
@@ -1668,7 +1728,7 @@ def main():
     check_file(args.list_samples)
     check_fasta_index(args.reference, args.samtools)
 
-    trgt_params, plot_params, cov_thresholds, cov_colors, cov_labels = load_trgt_params(args.params)
+    trgt_params, plot_params, cov_thresholds, cov_colors, cov_labels, qc_thresholds = load_trgt_params(args.params)
 
     if not args.non_interactive:
         print("\nCurrent TRGT genotype parameters:")
@@ -1903,7 +1963,8 @@ def main():
         generate_qc_report(
             output_root, args.run_name, samples, repeat_ids, bed_intervals, args, 
             samtools_exe=args.samtools, bcftools_exe=args.bcftools,
-            cov_thresholds=cov_thresholds, cov_colors=cov_colors, cov_labels=cov_labels
+            cov_thresholds=cov_thresholds, cov_colors=cov_colors, cov_labels=cov_labels,
+            qc_thresholds=qc_thresholds
         )
     except Exception as e:
         logging.error(f"Failed to generate Quality Control Report: {e}")
