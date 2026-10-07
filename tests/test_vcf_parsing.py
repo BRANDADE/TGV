@@ -94,3 +94,45 @@ def test_rc_locus_keeps_trgt_segmentation(analyze):
     r = analyze([line])["SCA1_ATXN1"]
     assert r.seg1_raw == "CAG(0-42)_CAT_CAG(45-90)"
     assert r.inter1_raw == "CAT(1)"
+
+
+# --- Règle de couverture par allèle (C5) ---------------------------------------
+
+def test_homozygous_call_qualified_on_summed_depth(analyze):
+    # GT 1/1 : TRGT répartit 86 lectures entre deux allèles identiques (43 / 43).
+    # C'est un seul allèle soutenu par 86 lectures : pas de signalement au seuil 50.
+    from scripts.core.comments import is_low_coverage
+    line = record("SCA17_TBP", ["CAG", "CAA"], [Call("CAG" * 36, depth=43), Call("CAG" * 36, depth=43)])
+    r = analyze([line])["SCA17_TBP"]
+    assert r.homozygous
+    assert not is_low_coverage(r, 50)
+    assert r.display_row.depth == "43 / 43"
+
+
+def test_homozygous_call_flagged_when_sum_below_threshold(analyze):
+    from scripts.core.comments import is_low_coverage
+    line = record("SCA17_TBP", ["CAG", "CAA"], [Call("CAG" * 36, depth=20), Call("CAG" * 36, depth=20)])
+    r = analyze([line])["SCA17_TBP"]
+    assert is_low_coverage(r, 50)
+    assert r.display_row.depth == "⚠ 20 / ⚠ 20"
+
+
+def test_heterozygous_expanded_allele_flagged_despite_high_locus_depth(analyze):
+    # Cas FXN du jeu public : 100 lectures sur l'allèle normal, 8 sur l'allèle expansé.
+    # La somme (108) passerait un seuil par locus ; la règle par allèle signale l'expansion.
+    from scripts.core.comments import is_low_coverage, low_coverage_alleles
+    line = record("SCA17_TBP", ["CAG", "CAA"], [Call("CAG" * 36, depth=100), Call("CAG" * 52, depth=8)])
+    r = analyze([line])["SCA17_TBP"]
+    assert not r.homozygous
+    assert is_low_coverage(r, 50)
+    assert low_coverage_alleles(r, 50) == {2}
+    assert r.display_row.depth == "100 / ⚠ 8"
+
+
+def test_haploid_call_uses_single_allele_depth(analyze):
+    # Appel haploïde (GT "1") : un seul allèle appelé, pas de somme.
+    from scripts.core.comments import is_low_coverage
+    line = record("SCA17_TBP", ["CAG", "CAA"], [Call("CAG" * 36, depth=40)])
+    r = analyze([line])["SCA17_TBP"]
+    assert not r.homozygous
+    assert is_low_coverage(r, 50)

@@ -5,6 +5,7 @@ from scripts.models.display import DisplayRow, DisplayDetails, DisplayExport, Di
 
 
 from scripts.core.result_builder import fill_raw_base, fill_clinical_base
+from scripts.core.comments import low_coverage_alleles
 from scripts.core.clinical_compute import genotype_value
 from scripts.core.marking import mark_pathogenic_motifs, mark_pathogenic_segments, mark_pathogenic_repetition, mark_pathogenic_genotype
 
@@ -24,15 +25,18 @@ def to_int(value):
         return None
 
 
-def depth_display(raw, status, threshold):
-    """Profondeur affichée (avec ⚠ si sous le seuil) et profondeur brute exportée."""
+def depth_display(raw, status, low):
+    """
+    Profondeur affichée (avec ⚠ si l'allèle est signalé) et profondeur brute exportée.
+    low : décision de comments.low_coverage_alleles (somme des SD pour un homozygote).
+    """
     if status == ABSENT:
         return ABSENT_DISPLAY, ABSENT_DISPLAY
     value = to_int(raw)
     if value is None:
         return ".", "."
     shown = f"{value}"
-    if threshold is not None and value < threshold:
+    if low:
         shown = f"\U000026A0 {value}"
     return shown, f"{value}"
 
@@ -91,6 +95,7 @@ def process_result(analysis_input):
 
         # 1) RAW TRGT
         fill_raw_base(result, trid_id, trid_global, a1, a2)
+        result.homozygous = getattr(sample, "homozygous", False)
         result.has_clinical = trid_global.clinical is not None
         result.thresholds_source = trid_global.clinical.source if trid_global.clinical else ""
 
@@ -279,8 +284,9 @@ def process_display(result, clinical_cfg, low_depth_threshold):
     result.display_html.locus = result.locus
 
     # --- Profondeur ---
-    depth1, result.display_export.depth1 = depth_display(result.depth1_raw, result.status1, valid_threshold)
-    depth2, result.display_export.depth2 = depth_display(result.depth2_raw, result.status2, valid_threshold)
+    low = low_coverage_alleles(result, valid_threshold)
+    depth1, result.display_export.depth1 = depth_display(result.depth1_raw, result.status1, 1 in low)
+    depth2, result.display_export.depth2 = depth_display(result.depth2_raw, result.status2, 2 in low)
     result.display_row.depth = f"{depth1} / {depth2}"
     result.display_details.depth = f"{depth1} / {depth2}"
     result.display_html.depth = f"{depth1} / {depth2}"

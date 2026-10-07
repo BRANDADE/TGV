@@ -184,6 +184,7 @@ def parse_vcf_for_sample(zip_path, vcf_filename, global_trids):
                 sample_obj.gt_raw = data.get("GT")
 
                 indices, ploidy = parse_gt(sample_obj.gt_raw)
+                sample_obj.homozygous = len(indices) == 2 and indices[0] == indices[1]
                 alt_list = [] if alt == "." else alt.split(",")
 
                 alleles = []

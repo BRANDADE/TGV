@@ -331,11 +331,16 @@ SCA17_TBP:
 
 SCA27B_FGF14:
     source:
-        document: "Erdmann et al"
-        version: "2025"
+        documents:
+            - name: "Erdmann et al"
+              version: "2025"
+            # Comptage : seul le GAA compte (« Non-GAA-pure repeat expansions in FGF14
+            # are likely not pathogenic ») → interruptions exclues du total.
+            - name: "GeneReviews GAA-FGF14 Ataxia (NBK599589)"
+              version: "2024-01-25"
 
     classification_mode: "simple"
-    repeat_mode: "sum_with_interruptions"
+    repeat_mode: "sum_without_interruptions"
     genotype_display: "pathogenic_only"
     orientation: "FW"
 
@@ -388,6 +393,9 @@ FRDA_FXN:
               version: "02-2025"
             - name: "Benkirane et al."
               version: "2025"
+            # Seuils : normal 5–33, intermédiaire (normal mutable) 34–65, pleine pénétrance ≥ 66
+            - name: "GeneReviews Friedreich Ataxia, Bidichandani et al. (NBK1281)"
+              version: "2025-06-26"
 
     classification_mode: "simple"
     repeat_mode: "sum_with_interruptions"
@@ -405,8 +413,8 @@ FRDA_FXN:
     thresholds:
         GAA_GAAA_GAAGAAA:
             "normal": [0, 33]
-            "intermediate": [34, 89]
-            "pathogenic_complete": [90, null]
+            "intermediate": [34, 65]
+            "pathogenic_complete": [66, null]
 
     structure_rules: []
 

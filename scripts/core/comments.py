@@ -6,23 +6,49 @@ from scripts.bio.labels import NO_CALL
 LOW_COVERAGE = "Couverture faible"
 
 
-def is_low_coverage(result, low_depth_threshold):
-    """Vrai si un allèle appelé a une profondeur (SD) inférieure au seuil."""
-    if low_depth_threshold is None:
-        return False
+def _to_int(value):
     try:
-        threshold = int(low_depth_threshold)
+        return int(value)
     except (TypeError, ValueError):
-        return False
-    for status, depth in ((result.status1, result.depth1_raw), (result.status2, result.depth2_raw)):
-        if status != "called":
-            continue
-        try:
-            if int(depth) < threshold:
-                return True
-        except (TypeError, ValueError):
-            continue
-    return False
+        return None
+
+
+def low_coverage_alleles(result, low_depth_threshold):
+    """
+    Allèles (1, 2) dont la profondeur est sous le seuil.
+
+    Règle par allèle : chaque allèle appelé doit être soutenu par au moins
+    `low_depth_threshold` lectures (SD), pour qu'un allèle expansé peu couvert
+    ne soit pas masqué par un allèle normal bien couvert.
+
+    Exception, appel homozygote (GT "1/1") : TRGT répartit les lectures entre deux
+    allèles identiques ; c'est un seul allèle, qualifié sur la somme des SD.
+    Les deux allèles sont alors signalés ensemble ou pas du tout.
+    """
+    if low_depth_threshold is None:
+        return set()
+    threshold = _to_int(low_depth_threshold)
+    if threshold is None:
+        return set()
+
+    called = {
+        idx: _to_int(depth)
+        for idx, status, depth in ((1, result.status1, result.depth1_raw), (2, result.status2, result.depth2_raw))
+        if status == "called"
+    }
+
+    if getattr(result, "homozygous", False) and len(called) == 2:
+        depths = list(called.values())
+        if any(d is None for d in depths):
+            return set()
+        return {1, 2} if sum(depths) < threshold else set()
+
+    return {idx for idx, depth in called.items() if depth is not None and depth < threshold}
+
+
+def is_low_coverage(result, low_depth_threshold):
+    """Vrai si au moins un allèle appelé est sous le seuil (voir low_coverage_alleles)."""
+    return bool(low_coverage_alleles(result, low_depth_threshold))
 
 
 def classification_notes(result):

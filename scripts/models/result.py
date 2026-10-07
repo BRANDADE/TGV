@@ -23,6 +23,9 @@ class Result:
 
         # Le locus possède une configuration clinique (bloc YAML) et sa référence
         self.has_clinical = False
+
+        # Appel homozygote : la profondeur est qualifiée sur la somme des SD (comments.py)
+        self.homozygous = False
         self.thresholds_source = ""
 
         # Motifs
