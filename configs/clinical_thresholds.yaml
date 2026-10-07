@@ -351,12 +351,12 @@ SCA27B_FGF14:
 
     classification_mode: "simple"
     repeat_mode: "sum_without_interruptions"
-    genotype_display: "pathogenic_only"
+    genotype_display: "full_with_others"
     orientation: "FW"
 
     motif_properties:
         pathogenic_motifs: ["GAA"]
-        pure_only: true
+        pure_only: false
 
         motif_groups:
             GAA: ["GAA"]

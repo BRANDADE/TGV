@@ -27,6 +27,25 @@ def test_rfc1_order_uses_displayed_genotype(analyze):
     assert r.display_row.classification == "normal / pathogenic"
 
 
+def test_fgf14_shows_motif_like_rfc1(analyze):
+    # GAA seul compté (interruption GCA exclue), motif affiché comme pour RFC1
+    line = record(
+        "SCA27B_FGF14", ["GAA", "GCA"],
+        [Call("GAA" * 150 + "GCA" + "GAA" * 150), Call("GAA" * 30)],
+    )
+    r = analyze([line])["SCA27B_FGF14"]
+    assert r.display_export.genotype == "30 (GAA) / 300 (GAA)"
+    assert r.display_row.classification == "normal / pathogenic_incomplete"
+
+
+def test_fgf14_normal_allele_shows_majority_other_motif(analyze):
+    # Allèle normal surtout non-GAA : le motif majoritaire est affiché (full_with_others)
+    line = record("SCA27B_FGF14", ["GAA", "GCA"], [Call("GAA" * 5 + "GCA" * 40), Call("GAA" * 20)])
+    r = analyze([line])["SCA27B_FGF14"]
+    assert r.display_export.genotype == "20 (GAA) / 40 (GCA)"
+    assert r.display_row.classification == "normal / normal"
+
+
 def test_pure_only_orders_on_first_displayed_number(analyze):
     # FMR1 (pure_only) : '31 (32)' vs '30 (30)' → 30 d'abord
     line = record(
