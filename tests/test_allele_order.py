@@ -24,7 +24,7 @@ def test_rfc1_order_uses_displayed_genotype(analyze):
     line = record("CANVAS_RFC1", RFC1_MOTIFS, [Call("AAGGG" * 450), Call("AAAAG" * 11)])
     r = analyze([line])["CANVAS_RFC1"]
     assert r.display_export.genotype == "11 (AAAAG) / 450 (AAGGG)"
-    assert r.display_row.classification == "unclassified / pathogenic"
+    assert r.display_row.classification == "normal / pathogenic"
 
 
 def test_pure_only_orders_on_first_displayed_number(analyze):
@@ -44,8 +44,8 @@ def test_haploid_called_allele_always_first(analyze):
 
 
 def test_non_clinical_locus_ordered_by_length(analyze):
-    line = record("HD_HTT", ["CAG"], [Call("CAG" * 40), Call("CAG" * 17)])
-    r = analyze([line])["HD_HTT"]
+    line = record("XYZ_GENE", ["CAG"], [Call("CAG" * 40), Call("CAG" * 17)])
+    r = analyze([line])["XYZ_GENE"]
     assert r.display_row.size == "51 / 120"
 
 

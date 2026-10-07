@@ -33,7 +33,10 @@ def test_catalog_from_command():
 
 def test_format_source(thresholds_data):
     assert format_source(thresholds_data["SCA17_TBP"]["source"]) == "HAS - Volet 1 (02-2025)"
-    assert format_source(thresholds_data["FRDA_FXN"]["source"]) == "HAS - Volet 1 (02-2025); Benkirane et al. (2025)"
+    assert format_source(thresholds_data["FRDA_FXN"]["source"]) == (
+        "HAS - Volet 1 (02-2025); Benkirane et al. (2025); "
+        "GeneReviews Friedreich Ataxia (NBK1281) (06-2025)"
+    )
 
 
 def test_tgv_provenance():
