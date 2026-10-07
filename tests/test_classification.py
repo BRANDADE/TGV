@@ -1,4 +1,7 @@
 """A3 — ce que TGV ne sait pas classer n'est ni 'normal' ni supprimé de l'export."""
+import copy
+
+from conftest import load_thresholds
 from trgt_vcf import Call, record
 
 from scripts.bio.labels import NOTE_MOTIF_DISCORDANCE, NOTE_OUT_OF_RANGE, UNCLASSIFIED
@@ -7,19 +10,40 @@ from scripts.ui.html_export import generate_html_table
 RFC1_MOTIFS = ["AAAAG", "AAAGG", "AAGGG", "ACAGG", "AGGGC"]
 
 
+def thresholds_with(trid, group, ranges):
+    """Configuration livrée, avec des plages remplacées pour un groupe (trou, chevauchement…)."""
+    data = copy.deepcopy(load_thresholds())
+    data[trid]["thresholds"][group] = ranges
+    return data
+
+
+# Configuration à trou : SCA36 sans la plage 15–649
+NOP56_GAP = thresholds_with("SCA36_NOP56", "GGCCTG", {"normal": [0, 14], "pathogenic_complete": [650, None]})
+
+
 def test_value_outside_all_ranges_is_unclassified(analyze):
-    # SCA36 : 15–649 absent du YAML (GeneReviews : signification incertaine)
     line = record("SCA36_NOP56", ["GGCCTG"], [Call("GGCCTG" * 8), Call("GGCCTG" * 100)])
-    r = analyze([line])["SCA36_NOP56"]
+    r = analyze([line], thresholds=NOP56_GAP)["SCA36_NOP56"]
     assert r.classification1_raw == "normal"
     assert r.classification2_raw == UNCLASSIFIED
     assert r.classification2_note == NOTE_OUT_OF_RANGE
 
 
+def test_shipped_nop56_uncertain_range_is_ambiguous(analyze):
+    # Configuration livrée : 15–649 = signification incertaine (GeneReviews SCA36)
+    line = record("SCA36_NOP56", ["GGCCTG"], [Call("GGCCTG" * 8), Call("GGCCTG" * 100)])
+    r = analyze([line])["SCA36_NOP56"]
+    assert (r.classification1_raw, r.classification2_raw) == ("normal", "ambiguous")
+
+
 def test_overlapping_ranges_are_unclassified(analyze):
-    # FMR1 : 200 est à la fois 'premutation' [55, 200] et 'pathogenic_complete' [200, null]
+    # 200 à la fois 'premutation' [55, 200] et 'pathogenic_complete' [200, null]
+    overlap = thresholds_with("FXS_FMR1", "CGG", {
+        "normal": [0, 44], "intermediate": [45, 54],
+        "premutation": [55, 200], "pathogenic_complete": [200, None],
+    })
     line = record("FXS_FMR1", ["CGG"], [Call("CGG" * 30), Call("CGG" * 200)])
-    r = analyze([line])["FXS_FMR1"]
+    r = analyze([line], thresholds=overlap)["FXS_FMR1"]
     assert r.classification2_raw == UNCLASSIFIED
     assert "premutation" in r.classification2_note and "pathogenic_complete" in r.classification2_note
 
@@ -41,10 +65,13 @@ def test_motif_discordance_keeps_locus_as_unclassified(analyze):
 
 
 def test_rfc1_without_normal_range_shows_other_motif(analyze):
-    # RFC1 : pas de plage 'normal' dans le YAML → AAAAG(11) 'unclassified' ;
+    # RFC1 sans plage 'normal' → AAAAG(11) 'unclassified' ;
     # le génotype affiche toujours le motif majoritaire (full_with_others).
+    no_normal = copy.deepcopy(load_thresholds())
+    for group in ("AAGGG", "AAAGG", "ACAGG", "AGGGC"):
+        no_normal["CANVAS_RFC1"]["thresholds"][group].pop("normal")
     line = record("CANVAS_RFC1", RFC1_MOTIFS, [Call("AAAAG" * 11), Call("AAGGG" * 450)])
-    r = analyze([line])["CANVAS_RFC1"]
+    r = analyze([line], thresholds=no_normal)["CANVAS_RFC1"]
     assert (r.classification1_raw, r.classification2_raw) == (UNCLASSIFIED, "pathogenic")
     assert (r.genotype1_raw, r.genotype2_raw) == ("11 (AAAAG)", "450 (AAGGG)")
 
@@ -54,7 +81,7 @@ def test_unclassified_loci_are_exported_with_explanation(analyze):
         record("SCA36_NOP56", ["GGCCTG"], [Call("GGCCTG" * 8), Call("GGCCTG" * 100)], pos=1000),
         record("SCA17_TBP", ["AAT"], [Call("AAT" * 20), Call("AAT" * 30)], pos=5000),
     ]
-    results = analyze(lines)
+    results = analyze(lines, thresholds=NOP56_GAP)
     rows = [
         {"Locus": r.locus, "Profondeur": r.display_row.depth, "Génotype": r.display_row.genotype,
          "Classification": r.display_row.classification, "Result_obj": r,

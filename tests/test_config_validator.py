@@ -4,20 +4,11 @@ import copy
 from scripts.bio.clinical_config_validator import coverage_gaps, validate_thresholds
 
 
-def test_shipped_yaml_has_no_error_and_expected_warnings(thresholds_data):
+def test_shipped_yaml_has_no_error_and_no_warning(thresholds_data):
+    # Configuration livrée : plages continues de 0 à l'infini, sans chevauchement ni clé inconnue
     errors, warnings = validate_thresholds(thresholds_data)
     assert errors == []
-    expected = {
-        "SCA1_ATXN1 [CAG_CAA] : valeurs 0–5 hors de toute plage → 'unclassified'",
-        "SCA7_ATXN7 [CAG_CAA] : valeurs 20–27 hors de toute plage → 'unclassified'",
-        "SCA36_NOP56 [GGCCTG] : valeurs 15–649 hors de toute plage → 'unclassified'",
-        "CANVAS_RFC1 [AAGGG] : valeurs 0–199 hors de toute plage → 'unclassified'",
-        "CANVAS_RFC1 [AAAGG] : valeurs 0–499 hors de toute plage → 'unclassified'",
-        "FXS_FMR1 [CGG] : plages 'premutation' et 'pathogenic_complete' qui se chevauchent sur 200 → 'unclassified'",
-        "FXS_FMR1 : clé inconnue 'motif_properties.non_pathogenic_motifs' (ignorée)",
-    }
-    assert expected <= set(warnings)
-    assert len(warnings) == 14
+    assert warnings == []
 
 
 def test_coverage_gaps():

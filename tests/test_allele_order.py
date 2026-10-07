@@ -24,7 +24,7 @@ def test_rfc1_order_uses_displayed_genotype(analyze):
     line = record("CANVAS_RFC1", RFC1_MOTIFS, [Call("AAGGG" * 450), Call("AAAAG" * 11)])
     r = analyze([line])["CANVAS_RFC1"]
     assert r.display_export.genotype == "11 (AAAAG) / 450 (AAGGG)"
-    assert r.display_row.classification == "unclassified / pathogenic"
+    assert r.display_row.classification == "normal / pathogenic"
 
 
 def test_pure_only_orders_on_first_displayed_number(analyze):

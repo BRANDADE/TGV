@@ -98,6 +98,10 @@
 #
 #   → Définissent les labels cliniques par groupe.
 #   → Tous les GROUP_ID doivent être définis.
+#   → Bornes inclusives. Les plages d'un groupe doivent couvrir
+#     0 → ∞ sans trou ni chevauchement : toute valeur hors plage
+#     ou dans un chevauchement est classée 'unclassified'.
+#   → "ambiguous" = signification incertaine (VSI).
 #
 # ===================================================================
 # 7) label_priority :
@@ -163,6 +167,7 @@ low_depth_threshold: 50
 
 # ===================================================================
 
+
 SCA1_ATXN1:
     source:
         document: "HAS - Volet 1"
@@ -182,8 +187,9 @@ SCA1_ATXN1:
 
     thresholds:
         CAG_CAA:
-            "normal": [6, 38]
+            "normal": [0, 38]
             "pathogenic_complete": [45, null]
+            # 39–44 : couvert par les structure_rules ci-dessous.
 
     structure_rules:
         CAG_CAA:
@@ -217,7 +223,7 @@ SCA2_ATXN2:
 
     thresholds:
         CAG_CAA:
-            "normal": [14, 31]
+            "normal": [0, 31]
             "intermediate": [32, 34]
             "pathogenic_complete": [35, null]
 
@@ -243,7 +249,7 @@ SCA3_ATXN3:
 
     thresholds:
         CAG_CAA:
-            "normal": [12, 44]
+            "normal": [0, 44]
             "intermediate": [45, 59]
             "pathogenic_complete": [60, null]
 
@@ -278,9 +284,12 @@ SCA6_CACNA1A:
 
 SCA7_ATXN7:
     source:
-        document: "HAS - Volet 1"
-        version: "02-2025"
-    
+        documents:
+            - name: "HAS - Volet 1"
+              version: "02-2025"
+            - name: "GeneReviews SCA7 (NBK1256)"
+              version: "07-2020"
+
     classification_mode: "simple"
     repeat_mode: "sum_with_interruptions"
     genotype_display: "pathogenic_only"
@@ -295,7 +304,8 @@ SCA7_ATXN7:
 
     thresholds:
         CAG_CAA:
-            "normal": [4, 19]
+            # 20–27 : trou HAS (normal 4–19) comblé en "normal" selon GeneReviews.
+            "normal": [0, 27]
             "intermediate": [28, 33]
             "pathogenic_incomplete": [34, 35]
             "pathogenic_complete": [36, null]
@@ -322,7 +332,7 @@ SCA17_TBP:
 
     thresholds:
         CAG_CAA:
-            "normal": [25, 40]
+            "normal": [0, 40]
             "pathogenic_incomplete": [41, 48]
             "pathogenic_complete": [49, null]
 
@@ -337,7 +347,7 @@ SCA27B_FGF14:
             # Comptage : seul le GAA compte (« Non-GAA-pure repeat expansions in FGF14
             # are likely not pathogenic ») → interruptions exclues du total.
             - name: "GeneReviews GAA-FGF14 Ataxia (NBK599589)"
-              version: "2024-01-25"
+              version: "01-2024"
 
     classification_mode: "simple"
     repeat_mode: "sum_without_interruptions"
@@ -363,8 +373,11 @@ SCA27B_FGF14:
 
 SCA36_NOP56:
     source:
-        document: "Erdmann et al"
-        version: "2025"
+        documents:
+            - name: "Erdmann et al"
+              version: "2025"
+            - name: "GeneReviews SCA36 (NBK231880)"
+              version: "08-2014"
 
     classification_mode: "simple"
     repeat_mode: "sum_with_interruptions"
@@ -380,7 +393,9 @@ SCA36_NOP56:
 
     thresholds:
         GGCCTG:
-            "normal": [3, 14]
+            "normal": [0, 14]
+            # 15–649 : signification incertaine selon GeneReviews.
+            "ambiguous": [15, 649]
             "pathogenic_complete": [650, null]
 
     structure_rules: []
@@ -394,8 +409,8 @@ FRDA_FXN:
             - name: "Benkirane et al."
               version: "2025"
             # Seuils : normal 5–33, intermédiaire (normal mutable) 34–65, pleine pénétrance ≥ 66
-            - name: "GeneReviews Friedreich Ataxia, Bidichandani et al. (NBK1281)"
-              version: "2025-06-26"
+            - name: "GeneReviews Friedreich Ataxia (NBK1281)"
+              version: "06-2025"
 
     classification_mode: "simple"
     repeat_mode: "sum_with_interruptions"
@@ -442,19 +457,26 @@ CANVAS_RFC1:
             ACAGG: ["ACAGG"]
             AGGGC: ["AGGGC"]
 
+    # Récessif : classification allèle par allèle ("normal / pathogenic" = porteur).
+    # Plages "normal" ajoutées sous chaque seuil pathogène (allèle de référence
+    # (AAAAG)n → 0 pour ces quatre motifs).
     thresholds:
         AAAGG:
+            "normal": [0, 499]
             "pathogenic": [500, null]
 
         AAGGG:
+            "normal": [0, 199]
             "pathogenic": [200, null]
 
         ACAGG:
+            "normal": [0, 199]
             "pathogenic": [200, null]
 
         AGGGC:
+            "normal": [0, 199]
             "pathogenic": [200, null]
-        
+
     structure_rules: []
 
 
@@ -496,7 +518,8 @@ FXS_FMR1:
 
     motif_properties:
         pathogenic_motifs: ["CGG"]
-        non_pathogenic_motifs: ["AGG"]
+        # Motif non pathogène : AGG (interruptions ; présent dans le BED).
+        # Ancienne clé 'non_pathogenic_motifs' retirée : inconnue du code.
         pure_only: true
 
         motif_groups:
@@ -507,7 +530,8 @@ FXS_FMR1:
             "normal": [0, 44]
             "intermediate": [45, 54]
             "premutation": [55, 200]
-            "pathogenic_complete": [200, null]
+            # Mutation complète : > 200 CGG (GeneReviews FMR1, 05-2024).
+            "pathogenic_complete": [201, null]
 
     structure_rules: []
 
@@ -539,5 +563,348 @@ OPDM1_LRP12:
             "normal": [0, 40]
             "intermediate": [41, 75]
             "pathogenic_complete": [76, null]
+
+    structure_rules: []
+
+
+# ======================== Recherche ==============================
+#
+# Seuils : table interne du laboratoire.
+# Écarts avec la littérature : voir seuils_reference_a_discuter.csv.
+# TRID et motifs vérifiés contre le BED du laboratoire (après orientation).
+#
+# ===================================================================
+
+SCA10_ATXN10:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    motif_properties:
+        pathogenic_motifs: ["ATTCT"]
+        pure_only: false
+
+        # ⚠ ATTGT et TTTCT ne figurent pas dans le BED (MOTIFS=ATTCT) :
+        #   TRGT ne les compte pas, ces deux groupes restent à 0 tant que
+        #   le BED n'est pas modifié.
+        motif_groups:
+            ATTCT: ["ATTCT"]
+            ATTGT: ["ATTGT"]
+            TTTCT: ["TTTCT"]
+
+    thresholds:
+        # Table : normal < 30, pathogène > 799.
+        ATTCT:
+            "normal": [0, 29]
+            "intermediate": [30, 799]
+            "pathogenic": [800, null]
+
+        # Table : VSI.
+        ATTGT:
+            "normal": [0, 29]
+            "ambiguous": [30, null]
+
+        TTTCT:
+            "normal": [0, 29]
+            "ambiguous": [30, null]
+
+    structure_rules: []
+
+
+SCA12_PPP2R2B:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "RC"
+
+    motif_properties:
+        # Table : CAG (sens du gène). BED : GCT → RC = AGC (rotation de CAG).
+        pathogenic_motifs: ["AGC"]
+        pure_only: false
+
+        motif_groups:
+            AGC: ["AGC"]
+
+    thresholds:
+        # Table : normal < 33, pathogène > 50.
+        AGC:
+            "normal": [0, 32]
+            "intermediate": [33, 50]
+            "pathogenic": [51, null]
+
+    structure_rules: []
+
+
+SCA31_BEAN1:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    motif_properties:
+        pathogenic_motifs: ["TGGAA"]
+        # Motifs bénins (table) : TAAAA, TAGAA. BED : TAGAA, AATAA (rotation de TAAAA).
+        # Ancienne clé 'benign_motifs' retirée : inconnue du code.
+        pure_only: false
+
+        motif_groups:
+            TGGAA: ["TGGAA"]
+
+    thresholds:
+        # Table : normal < 109, pathogène > 500.
+        TGGAA:
+            "normal": [0, 108]
+            "intermediate": [109, 500]
+            "pathogenic": [501, null]
+
+    structure_rules: []
+
+
+DRPLA_ATN1:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    motif_properties:
+        pathogenic_motifs: ["CAG"]
+        pure_only: false
+
+        motif_groups:
+            CAG: ["CAG"]
+
+    thresholds:
+        # Table : normal < 23, pathogène > 48.
+        CAG:
+            "normal": [0, 22]
+            "intermediate": [23, 48]
+            "pathogenic": [49, null]
+
+    structure_rules: []
+
+
+SCA37_DAB1:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "RC"
+
+    motif_properties:
+        # Motif bénin (table) : ATTTT. BED : AAAAT, GAAAT → RC = ATTTT, ATTTC.
+        pathogenic_motifs: ["ATTTC"]
+        pure_only: false
+
+        motif_groups:
+            ATTTC: ["ATTTC"]
+
+    thresholds:
+        # Table : normal < 30, pathogène > 30. La valeur 30 reste "normal" :
+        # pathogène ≥ 31 ATTTC (GeneReviews SCA37, cité par STRchive).
+        ATTTC:
+            "normal": [0, 30]
+            "pathogenic": [31, null]
+
+    structure_rules: []
+
+
+SCA8_ATXN8OS:
+    # ATXN8 (CAG) et ATXN8OS (CTG) : même locus, lu sur les deux brins.
+    # Un seul enregistrement dans le BED (MOTIFS=CTA,CTG) → un seul bloc.
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    motif_properties:
+        pathogenic_motifs: ["CTG"]
+        pure_only: false
+
+        motif_groups:
+            CTG: ["CTG"]
+
+    thresholds:
+        # Table : normal < 38, pathogène > 70 (CTG seul).
+        CTG:
+            "normal": [0, 37]
+            "intermediate": [38, 70]
+            "pathogenic": [71, null]
+
+    structure_rules: []
+
+
+NIID_NOTCH2NLC:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    motif_properties:
+        pathogenic_motifs: ["GGC"]
+        pure_only: false
+
+        motif_groups:
+            GGC: ["GGC"]
+
+    thresholds:
+        # Table : normal < 42, pathogène > 59.
+        GGC:
+            "normal": [0, 41]
+            "intermediate": [42, 59]
+            "pathogenic": [60, null]
+
+    structure_rules: []
+
+
+SCA4_ZFHX3:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "RC"
+
+    motif_properties:
+        # BED : GCC → RC = GGC (sens du gène).
+        pathogenic_motifs: ["GGC"]
+        pure_only: false
+
+        motif_groups:
+            GGC: ["GGC"]
+
+    thresholds:
+        # Table : normal < 23, pathogène > 449.
+        # ⚠ Expansions SCA4 publiées : 46–74 GGC (voir CSV).
+        GGC:
+            "normal": [0, 22]
+            "intermediate": [23, 449]
+            "pathogenic": [450, null]
+
+    structure_rules: []
+
+
+HD_HTT:
+    source:
+        document: "Interne"
+        version: "08-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_with_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    # Table : CAG + CAA. Le BED ne déclare pas de motif CAA (MOTIFS=CAG,CCG) :
+    # le CAA de la structure (CAG)n-CAA-CAG est une interruption interne au
+    # groupe CAG. En mode sum_with_interruptions, il est ajouté au total
+    # (total = CAG + CAA ≈ CAG pur + 2 sur un allèle canonique).
+    # ⚠ Les seuils GeneReviews portent sur le CAG pur (voir CSV).
+    # ⚠ À calibrer sur un échantillon de taille connue : le résultat dépend
+    #   de la segmentation TRGT (MS) du CAG isolé qui suit le CAA.
+    # Tract CCG en aval (interruptions CCG/CGC de la table) : hors groupe, non compté.
+    motif_properties:
+        pathogenic_motifs: ["CAG"]
+        pure_only: false
+
+        motif_groups:
+            CAG: ["CAG"]
+
+    thresholds:
+        # Table : normal < 27, pathogène > 35.
+        CAG:
+            "normal": [0, 26]
+            "intermediate": [27, 35]
+            "pathogenic": [36, null]
+
+    structure_rules: []
+
+OPMD_PABPN1:
+    source:
+        documents:
+            - name: "GeneReviews OPMD (NBK1126)"
+              version: "10-2020"
+            - name: "STRchive opmd_pabpn1"
+              version: "10-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_without_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "FW"
+
+    motif_properties:
+        # BED : MOTIFS=GCN (N = A/C/G/T) → compte tous les codons alanine.
+        pathogenic_motifs: ["GCN"]
+        pure_only: false
+
+        motif_groups:
+            GCN: ["GCN"]
+
+    thresholds:
+        GCN:
+            "normal": [0, 10]
+            # GCN[11] : allèle étendu selon GeneReviews, intermédiaire selon STRchive.
+            "pathogenic_incomplete": [11, 11]
+            "pathogenic": [12, null]
+
+    structure_rules: []
+
+
+DM1_DMPK:
+    source:
+        documents:
+            - name: "GeneReviews DM1 (NBK1165)"
+              version: "11-2024"
+            - name: "STRchive dm1_dmpk"
+              version: "10-2026"
+
+    classification_mode: "simple"
+    repeat_mode: "sum_with_interruptions"
+    genotype_display: "pathogenic_only"
+    orientation: "RC"
+
+    motif_properties:
+        # BED : CAG (brin +) → RC = CTG (sens du gène).
+        # Interruptions (CCG, CGG, CTC…) comptées dans le total ;
+        # pure_only affiche « pur (total) ».
+        pathogenic_motifs: ["CTG"]
+        pure_only: true
+
+        motif_groups:
+            CTG: ["CTG"]
+
+    thresholds:
+        CTG:
+            "normal": [0, 34]
+            "premutation": [35, 49]
+            "pathogenic": [50, null]
 
     structure_rules: []
