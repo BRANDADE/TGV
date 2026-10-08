@@ -71,6 +71,19 @@
 
 
     // ==========================================
+    // QC thresholds (rapport QC du run)
+    // ==========================================
+    // min_allele_depth  : lectures minimales par allèle (somme pour un homozygote) ;
+    //                     garder la même valeur que low_depth_threshold de clinical_thresholds.yaml
+    // min_mean_coverage : couverture moyenne minimale d'un échantillon (X)
+    // min_pct_pass_loci : % minimal de loci PASS (champ FILTER du VCF)
+    "qc_thresholds": {
+        "min_allele_depth": 50,
+        "min_mean_coverage": 10,
+        "min_pct_pass_loci": 90
+    },
+
+    // ==========================================
     // QC legend parameters
     // ==========================================    
     "coverage_thresholds": {
