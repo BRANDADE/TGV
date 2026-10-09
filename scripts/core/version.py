@@ -4,7 +4,7 @@ Version de TGV et commit exact du code exécuté (traçabilité des résultats).
 import os
 import subprocess
 
-__version__ = "1.1.0"
+__version__ = "1.1.3"
 
 # Exécutable publié : version déduite du tag de la release au moment du build
 # (scripts/_build_info.py, généré par .github/workflows/build.yaml)
